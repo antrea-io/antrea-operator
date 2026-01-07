@@ -17,9 +17,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	operatorv1 "github.com/vmware/antrea-operator-for-kubernetes/api/v1"
-	operatortypes "github.com/vmware/antrea-operator-for-kubernetes/controllers/types"
-	"github.com/vmware/antrea-operator-for-kubernetes/internal/version"
+	operatorv1 "antrea.io/antrea-operator/api/v1"
+	operatortypes "antrea.io/antrea-operator/controllers/types"
+	"antrea.io/antrea-operator/internal/version"
 )
 
 var mockClusterConfig = configv1.Network{

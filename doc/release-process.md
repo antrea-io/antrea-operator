@@ -69,7 +69,7 @@ the generated content of the Antrea version.
 So for Antrea v1.9.0, Antrea Operator should be tagged with v1.9.0 as well.
 
 While
-[Antrea Operator upstream repository](https://github.com/vmware/antrea-operator-for-kubernetes) 
+[Antrea Operator upstream repository](https://github.com/antrea-io/antrea-operator)
 is tagged, GitHub Action triggers a build of
 the Antrea Operator image and then pushes the image into 
 [Docker Hub registry](https://hub.docker.com/r/antrea/antrea-operator).
@@ -86,7 +86,7 @@ the Antrea Operator image, and certification of the Antrea Operator bundle.
 Antrea Operator image certification should run after the image is created, 
 pushed and tagged. To trigger the execution of the image certification 
 automation, run the
-[image certification GitHub Action](https://github.com/vmware/antrea-operator-for-kubernetes/actions/workflows/certification.yml)
+[image certification GitHub Action](https://github.com/antrea-io/antrea-operator/actions/workflows/certification.yml)
 manually.
 
 This action receives as parameters the image version which should be identical 

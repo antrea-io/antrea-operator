@@ -400,7 +400,7 @@ spec:
     - security
   links:
     - name: Antrea Operator For Kubernetes
-      url: https://github.com/vmware/antrea-operator-for-kubernetes
+      url: https://github.com/antrea-io/antrea-operator
   maintainers:
     - email: projectantrea-maintainers@googlegroups.com
       name: Project Antrea Maintainers

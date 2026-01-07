@@ -69,8 +69,8 @@ function tidy {
         docker run --rm -u "$(id -u):$(id -g)" \
             -e "GOCACHE=/tmp/gocache" \
             -e "GOPATH=/tmp/gopath" \
-            -w /usr/src/vmware/antrea-operator-for-kubernetes \
-            -v "$(dirname "$THIS_DIR"):/usr/src/vmware/antrea-operator-for-kubernetes" \
+            -w /usr/src/antrea-io/antrea-operator \
+            -v "$(dirname "$THIS_DIR"):/usr/src/antrea-io/antrea-operator" \
             golang:$TARGET_GO_VERSION bash -c "$TIDY_COMMAND"
     fi
 }
