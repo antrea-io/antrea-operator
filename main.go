@@ -18,12 +18,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	operatorv1 "github.com/vmware/antrea-operator-for-kubernetes/api/v1"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/sharedinfo"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/statusmanager"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/types"
-	"github.com/vmware/antrea-operator-for-kubernetes/internal/version"
+	operatorv1 "antrea.io/antrea-operator/api/v1"
+	"antrea.io/antrea-operator/controllers"
+	"antrea.io/antrea-operator/controllers/sharedinfo"
+	"antrea.io/antrea-operator/controllers/statusmanager"
+	"antrea.io/antrea-operator/controllers/types"
+	"antrea.io/antrea-operator/internal/version"
 	// +kubebuilder:scaffold:imports
 )
 

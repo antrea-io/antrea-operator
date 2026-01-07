@@ -32,11 +32,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	operatorv1 "github.com/vmware/antrea-operator-for-kubernetes/api/v1"
-	configutil "github.com/vmware/antrea-operator-for-kubernetes/controllers/config"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/sharedinfo"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/statusmanager"
-	operatortypes "github.com/vmware/antrea-operator-for-kubernetes/controllers/types"
+	operatorv1 "antrea.io/antrea-operator/api/v1"
+	configutil "antrea.io/antrea-operator/controllers/config"
+	"antrea.io/antrea-operator/controllers/sharedinfo"
+	"antrea.io/antrea-operator/controllers/statusmanager"
+	operatortypes "antrea.io/antrea-operator/controllers/types"
 )
 
 var log = ctrl.Log.WithName("controllers")

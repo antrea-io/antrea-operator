@@ -6,7 +6,7 @@ on:
 
 jobs:
   stale:
-    if: github.repository == 'vmware/antrea-operator-for-kubernetes'
+    if: github.repository == 'antrea-io/antrea-operator'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/stale@v5
@@ -24,7 +24,7 @@ jobs:
           debug-only: false
           operations-per-run: 200
   skip:
-    if: github.repository != 'vmware/antrea-operator-for-kubernetes'
+    if: github.repository != 'antrea-io/antrea-operator'
     runs-on: ubuntu-latest
     steps:
       - name: Skip

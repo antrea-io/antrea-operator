@@ -1,4 +1,4 @@
-module github.com/vmware/antrea-operator-for-kubernetes
+module antrea.io/antrea-operator
 
 go 1.19
 

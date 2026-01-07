@@ -13,8 +13,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	operatorv1 "github.com/vmware/antrea-operator-for-kubernetes/api/v1"
-	operatortypes "github.com/vmware/antrea-operator-for-kubernetes/controllers/types"
+	operatorv1 "antrea.io/antrea-operator/api/v1"
+	operatortypes "antrea.io/antrea-operator/controllers/types"
 )
 
 var log = logf.Log.WithName("shared_info")

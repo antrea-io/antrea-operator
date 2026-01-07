@@ -24,8 +24,8 @@ import (
 	"github.com/openshift/cluster-network-operator/pkg/apply"
 	cnocient "github.com/openshift/cluster-network-operator/pkg/client"
 
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/sharedinfo"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/statusmanager"
+	"antrea.io/antrea-operator/controllers/sharedinfo"
+	"antrea.io/antrea-operator/controllers/statusmanager"
 )
 
 // The periodic resync interval.

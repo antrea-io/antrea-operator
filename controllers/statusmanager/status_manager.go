@@ -24,10 +24,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	operatorv1 "github.com/vmware/antrea-operator-for-kubernetes/api/v1"
-	"github.com/vmware/antrea-operator-for-kubernetes/controllers/sharedinfo"
-	operatortypes "github.com/vmware/antrea-operator-for-kubernetes/controllers/types"
-	"github.com/vmware/antrea-operator-for-kubernetes/internal/version"
+	operatorv1 "antrea.io/antrea-operator/api/v1"
+	"antrea.io/antrea-operator/controllers/sharedinfo"
+	operatortypes "antrea.io/antrea-operator/controllers/types"
+	"antrea.io/antrea-operator/internal/version"
 )
 
 var log = logf.Log.WithName("status_manager")

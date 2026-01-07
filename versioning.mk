@@ -45,7 +45,7 @@ endif
 # Image URL to use all building/pushing image targets
 IMG ?= antrea/antrea-operator:$(OPERATOR_IMG)
 
-VERSION_LDFLAGS = -X github.com/vmware/antrea-operator-for-kubernetes/internal/version.Version=$(VERSION)
+VERSION_LDFLAGS = -X antrea.io/antrea-operator/internal/version.Version=$(VERSION)
 
 version-info:
 	@echo "===> Version information <==="
