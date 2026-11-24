@@ -66,7 +66,8 @@ func validateClusterCIDRs(cluster *configv1.Network) error {
 		if _, exists := pods[family]; exists {
 			return fmt.Errorf("Antrea NodeIPAM accepts at most one clusterNetwork CIDR per IP family")
 		}
-		if entry.HostPrefix < uint32(prefix.Bits()) || entry.HostPrefix > uint32(prefix.Addr().BitLen()-2) || entry.HostPrefix == 0 {
+		hostPrefix := int64(entry.HostPrefix)
+		if hostPrefix == 0 || hostPrefix < int64(prefix.Bits()) || hostPrefix > int64(prefix.Addr().BitLen()-2) {
 			return fmt.Errorf("invalid hostPrefix %d for spec.clusterNetwork CIDR %q", entry.HostPrefix, entry.CIDR)
 		}
 		service, exists := services[family]

@@ -38,6 +38,9 @@ make bin
 
 ## Try it out on OpenShift 4 cluster
 
+See [OpenShift core configuration](doc/openshift-core.md) for bootstrap,
+image selection, network and encryption settings, and rollout recovery.
+
 For Openshift 4 clusters, antrea operator will be deployed in the early phases
 of cluster deployment. The antrea operator monitors cluster network
 configuration CRD(`Network.config.openshift.io/v1`) object to update the

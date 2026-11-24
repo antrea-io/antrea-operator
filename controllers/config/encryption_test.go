@@ -21,9 +21,9 @@ func TestOpenShiftEncryptionIntent(t *testing.T) {
 	}{
 		{name: "explicit unencrypted", top: "none", want: EncryptionProfile{Mode: EncryptionNone}},
 		{name: "legacy IPsec override", top: "IPsec", agent: "trafficEncryptionMode: none\n", psk: "legacy key",
-			want: EncryptionProfile{Mode: EncryptionIPsec, IPsecAuth: IPsecPSK, PSKSecretName: types.ManagedIPsecPSKSecret}},
+			want: EncryptionProfile{Mode: EncryptionIPsec, IPsecAuth: IPsecPSK, PSKSecretName: types.ManagedIPsecPSKName}},
 		{name: "legacy PSK Secret", agent: "trafficEncryptionMode: ipsec\n",
-			want: EncryptionProfile{Mode: EncryptionIPsec, IPsecAuth: IPsecPSK, PSKSecretName: types.LegacyIPsecPSKSecret}},
+			want: EncryptionProfile{Mode: EncryptionIPsec, IPsecAuth: IPsecPSK, PSKSecretName: types.DefaultIPsecPSKName}},
 		{name: "IPsec certificate", top: "ipsec", agent: certGates + "ipsec:\n  authenticationMode: cert\n", controller: certGates,
 			want: EncryptionProfile{Mode: EncryptionIPsec, IPsecAuth: IPsecCert}},
 		{name: "certificate gate missing", top: "ipsec", agent: certGates + "ipsec:\n  authenticationMode: cert\n",
