@@ -11,6 +11,7 @@ import (
 	"github.com/openshift/cluster-network-operator/pkg/names"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"antrea.io/antrea-operator/controllers/install"
@@ -37,11 +38,23 @@ type CoreOptions struct {
 	InstallGVK schema.GroupVersionKind
 	Bundle     *ResourceBundle
 	Version    string
+	// OpenShiftNamespace selects the already provisioned namespace for core
+	// operands. Leave it empty to use kube-system. A namespace migration
+	// requires a separate ownership handover.
+	OpenShiftNamespace string
 }
 
 func (opts CoreOptions) validate() error {
 	if gvk := opts.InstallGVK; !gvk.Empty() && (gvk.Group == "" || gvk.Version == "" || gvk.Kind != "AntreaInstall") {
 		return fmt.Errorf("expected a versioned AntreaInstall GVK, got %v", gvk)
+	}
+	if ns := opts.OpenShiftNamespace; ns != "" {
+		if errs := validation.IsDNS1123Label(ns); len(errs) != 0 {
+			return fmt.Errorf("invalid OpenShift core namespace %q: %v", ns, errs)
+		}
+		if ns == types.OperatorNameSpace {
+			return fmt.Errorf("the OpenShift core namespace must differ from the operator namespace %q", ns)
+		}
 	}
 	if opts.Bundle != nil {
 		if opts.Bundle.ManifestDir == "" || len(opts.Bundle.OwnedResources) == 0 {
@@ -67,6 +80,9 @@ func RegisterCore(ctx context.Context, mgr ctrl.Manager, opts CoreOptions) error
 	if err != nil {
 		return fmt.Errorf("reading install platform: %w", err)
 	}
+	if opts.OpenShiftNamespace != "" && info.AntreaPlatform != "openshift" {
+		return fmt.Errorf("OpenShiftNamespace requires the OpenShift platform")
+	}
 	if opts.Version == "" {
 		opts.Version = version.GetVersion()
 	}
@@ -86,6 +102,9 @@ func RegisterCore(ctx context.Context, mgr ctrl.Manager, opts CoreOptions) error
 	}
 	controller.installGVK = install.Object(opts.InstallGVK).GroupVersionKind()
 	controller.version = opts.Version
+	if oc, ok := controller.Adaptor.(*AdaptorOc); ok {
+		oc.Config.CoreNamespace = opts.OpenShiftNamespace
+	}
 	if opts.Bundle != nil {
 		controller.manifestDir = opts.Bundle.ManifestDir
 		controller.configure = opts.Bundle.Configure

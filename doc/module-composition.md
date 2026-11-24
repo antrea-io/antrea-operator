@@ -23,6 +23,7 @@ through the status subresource.
 | --- | --- |
 | `CoreOptions.InstallGVK` | A zero value selects the standalone GVK. A distribution can select another group/version serving the same namespaced kind and shared field formats. |
 | `CoreOptions.Version` | Release value supplied to templates and reported in the OpenShift ClusterOperator's operator version. The default comes from the upstream build. |
+| `CoreOptions.OpenShiftNamespace` | The selected core namespace on OpenShift. Empty selects `kube-system`. Provision the namespace before starting the operator. Optional `spec.coreNamespace` must match that selection. Use `{{.AntreaNamespace}}` in templates and the selected value in `OwnedResources`. |
 | `CoreOptions.Bundle` | A nil bundle selects the shipped templates. A custom `*controllers.ResourceBundle` provides a manifest directory and its core resource identities. |
 | `ResourceBundle.ManifestDir` | CNO renders the generated directory. Include core manifests, the required agent and controller, and distribution-specific core CRDs/RBAC here. Keep the install CRD in the distribution's install archive. |
 | `ResourceBundle.OwnedResources` | Exact OpenShift `configv1.ObjectReference` values with API group, plural resource, namespace and name. Include every active identity and retired identities still eligible for cleanup. Registration copies the list. Generate it from the core resource contract independently of optional enablement flags. |
@@ -80,11 +81,12 @@ separately. [Condition merge regression](../controllers/install/install_test.go)
 
 ## Integration handoff
 
-- **U03 and N01.** The current core identities are DaemonSet
+- **U03 and N01.** The selected namespace drives rendering, workload identity,
+  status and recovery. The default identities are DaemonSet
   `kube-system/antrea-agent` and Deployment `kube-system/antrea-controller`.
-  U03 and N01 must agree on the replacement namespace source for render,
-  workload identification, recovery, and handover before enabling a move.
-  U03 owns generic core and IPsec configuration and validation.
+  Changing the startup selection on an installed cluster requires the N01
+  ownership handover before starting the new reconciler. Keep the operator
+  and Interworking namespace selections independent.
 - **M02 and M04.** M02 owns the compatible full install CRD, distribution
   defaults, Interworking resources and conditions, and migration of the
   legacy shared inventory. M04 exercises the actual composed binary,

@@ -40,6 +40,11 @@ type AntreaInstallSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// +optional
 	AntreaImage string `json:"antreaImage,omitempty"`
+
+	// CoreNamespace, when specified, must match the namespace selected at
+	// operator startup for the OpenShift core workloads.
+	// +optional
+	CoreNamespace string `json:"coreNamespace,omitempty"`
 }
 
 // AntreaInstallStatus defines the observed state of AntreaInstall

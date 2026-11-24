@@ -321,7 +321,7 @@ spec:
       clientConfig:
         service:
           name: antrea
-          namespace: kube-system
+          namespace: "{{.AntreaNamespace}}"
           path: /convert/clustergroup
       conversionReviewVersions:
       - v1
@@ -5586,7 +5586,7 @@ metadata:
   labels:
     app: antrea
   name: antctl
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -5594,7 +5594,7 @@ metadata:
   labels:
     app: antrea
   name: antrea-agent
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -5602,7 +5602,7 @@ metadata:
   labels:
     app: antrea
   name: antrea-controller
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -6378,7 +6378,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: antctl
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -6393,7 +6393,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: antrea-agent
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -6408,7 +6408,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: antrea-controller
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 ---
 apiVersion: v1
 data:
@@ -6423,7 +6423,7 @@ metadata:
   labels:
     app: antrea
   name: antrea-config
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 ---
 apiVersion: v1
 kind: Secret
@@ -6431,7 +6431,7 @@ metadata:
   annotations:
     kubernetes.io/service-account.name: antctl
   name: antctl-service-account-token
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 type: kubernetes.io/service-account-token
 ---
 apiVersion: v1
@@ -6440,7 +6440,7 @@ metadata:
   annotations:
     kubernetes.io/service-account.name: antrea-agent
   name: antrea-agent-service-account-token
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 type: kubernetes.io/service-account-token
 ---
 apiVersion: v1
@@ -6449,7 +6449,7 @@ metadata:
   labels:
     app: antrea
   name: antrea
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 spec:
   ports:
   - port: 443
@@ -6468,7 +6468,7 @@ metadata:
     app: antrea
     component: antrea-controller
   name: antrea-controller
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 spec:
   replicas: 1
   selector:
@@ -6594,7 +6594,7 @@ spec:
   groupPriorityMinimum: 100
   service:
     name: antrea
-    namespace: kube-system
+    namespace: "{{.AntreaNamespace}}"
   version: v1alpha1
   versionPriority: 100
 ---
@@ -6610,7 +6610,7 @@ spec:
   groupPriorityMinimum: 100
   service:
     name: antrea
-    namespace: kube-system
+    namespace: "{{.AntreaNamespace}}"
   version: v1beta1
   versionPriority: 100
 ---
@@ -6626,7 +6626,7 @@ spec:
   groupPriorityMinimum: 100
   service:
     name: antrea
-    namespace: kube-system
+    namespace: "{{.AntreaNamespace}}"
   version: v1beta2
   versionPriority: 100
 ---
@@ -6639,7 +6639,7 @@ metadata:
     app: antrea
     component: antrea-agent
   name: antrea-agent
-  namespace: kube-system
+  namespace: "{{.AntreaNamespace}}"
 spec:
   selector:
     matchLabels:
@@ -6858,7 +6858,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /mutate/acnp
   name: acnpmutator.antrea.io
   rules:
@@ -6880,7 +6880,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /mutate/annp
   name: annpmutator.antrea.io
   rules:
@@ -6911,7 +6911,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/tier
   name: tiervalidator.antrea.io
   rules:
@@ -6935,7 +6935,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/acnp
   name: acnpvalidator.antrea.io
   rules:
@@ -6957,7 +6957,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/annp
   name: annpvalidator.antrea.io
   rules:
@@ -6979,7 +6979,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/anp
   name: anpvalidator.antrea.io
   rules:
@@ -7000,7 +7000,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/banp
   name: banpvalidator.antrea.io
   rules:
@@ -7021,7 +7021,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/clustergroup
   name: clustergroupvalidator.antrea.io
   rules:
@@ -7043,7 +7043,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/group
   name: groupvalidator.antrea.io
   rules:
@@ -7065,7 +7065,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/externalippool
   name: externalippoolvalidator.antrea.io
   rules:
@@ -7086,7 +7086,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/egress
   name: egressvalidator.antrea.io
   rules:
@@ -7108,7 +7108,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/ippool
   name: ippoolvalidator.antrea.io
   rules:
@@ -7131,7 +7131,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/supportbundlecollection
   name: supportbundlecollectionvalidator.antrea.io
   rules:
@@ -7153,7 +7153,7 @@ webhooks:
   clientConfig:
     service:
       name: antrea
-      namespace: kube-system
+      namespace: "{{.AntreaNamespace}}"
       path: /validate/traceflow
   name: traceflowvalidator.antrea.io
   rules:

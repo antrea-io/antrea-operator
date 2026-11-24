@@ -121,7 +121,9 @@ $KUSTOMIZE edit add patch --path controllerImage.yml
 $KUSTOMIZE edit add patch --path agentImagePullPolicy.yml
 $KUSTOMIZE edit add patch --path controllerImagePullPolicy.yml
 
-$KUSTOMIZE build | sed 's/\\"\({{.*}}\)\\"/"\1"/; '"s/'\({{.*}}\)'/\1/" > $THIS_DIR/../antrea-manifest/antrea.yml
+$KUSTOMIZE build | sed 's/\\"\({{.*}}\)\\"/"\1"/; '"s/'\({{.*}}\)'/\1/" \
+    | sed 's/namespace: kube-system$/namespace: "{{.AntreaNamespace}}"/' \
+    > "$THIS_DIR/../antrea-manifest/antrea.yml"
 
 popd > /dev/null
 

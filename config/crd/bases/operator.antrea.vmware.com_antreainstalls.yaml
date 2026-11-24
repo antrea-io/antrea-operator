@@ -56,6 +56,11 @@ spec:
                 description: AntreaPlatform is the platform on which antrea will be
                   deployed.
                 type: string
+              coreNamespace:
+                description: |-
+                  CoreNamespace, when specified, must match the namespace selected at
+                  operator startup for the OpenShift core workloads.
+                type: string
             required:
             - antreaAgentConfig
             - antreaCNIConfig

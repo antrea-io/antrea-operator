@@ -56,7 +56,7 @@ type AdaptorK8s struct {
 }
 
 type AdaptorOc struct {
-	Config configutil.Config
+	Config *configutil.ConfigOc
 }
 
 func (k8s *AdaptorK8s) SetupWithManager(r *AntreaInstallReconciler, mgr ctrl.Manager) error {
@@ -104,6 +104,11 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 			return reconcile.Result{}, err
 		}
 	}
+	if renderData.Data[operatortypes.AntreaNamespaceRenderKey] != r.coreNamespace() {
+		err := fmt.Errorf("bundle configuration changed the selected Antrea namespace %q", r.coreNamespace())
+		r.Status.SetDegraded(statusmanager.OperatorConfig, "RenderConfigError", err.Error())
+		return reconcile.Result{}, err
+	}
 
 	appliedConfig := r.AppliedOperConfig
 	if r.Status.CoreResources == nil && appliedConfig == nil {
@@ -145,14 +150,14 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 
 		// Delete old antrea-agent and antrea-controller pods.
 		if r.Status.CoreResources == nil && r.AppliedOperConfig != nil && agentNeedChange && !imageChange {
-			if err = deleteExistingPods(r.Client.Default().CRClient(), operatortypes.AntreaAgentDaemonSetName); err != nil {
+			if err = r.deleteExistingPods(operatortypes.AntreaAgentDaemonSetName); err != nil {
 				msg := fmt.Sprintf("DaemonSet %s is not using the latest configuration updates because: %v", operatortypes.AntreaAgentDaemonSetName, err)
 				r.Status.SetDegraded(statusmanager.OperatorConfig, "DeleteOldPodsError", msg)
 				return reconcile.Result{Requeue: true}, err
 			}
 		}
 		if r.Status.CoreResources == nil && r.AppliedOperConfig != nil && controllerNeedChange && !imageChange {
-			if err = deleteExistingPods(r.Client.Default().CRClient(), operatortypes.AntreaControllerDeploymentName); err != nil {
+			if err = r.deleteExistingPods(operatortypes.AntreaControllerDeploymentName); err != nil {
 				msg := fmt.Sprintf("Deployment %s is not using the latest configuration updates because: %v", operatortypes.AntreaControllerDeploymentName, err)
 				r.Status.SetDegraded(statusmanager.OperatorConfig, "DeleteOldPodsError", msg)
 				return reconcile.Result{Requeue: true}, err
@@ -351,6 +356,13 @@ func (r *AntreaInstallReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return r.Adaptor.SetupWithManager(r, mgr)
 }
 
+func (r *AntreaInstallReconciler) coreNamespace() string {
+	if oc, ok := r.Adaptor.(*AdaptorOc); ok {
+		return oc.Config.Namespace()
+	}
+	return operatortypes.AntreaNamespace
+}
+
 // +kubebuilder:rbac:groups=operator.antrea.vmware.com,resources=antreainstalls,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=operator.antrea.vmware.com,resources=antreainstalls/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusteroperators,verbs=get;list;watch;create;update;patch;delete
@@ -388,7 +400,7 @@ func (r *AntreaInstallReconciler) getAppliedOperConfig() (*operatorv1.AntreaInst
 	configList := &corev1.ConfigMapList{}
 	label := map[string]string{"app": "antrea"}
 	crcClient := r.Client.Default().CRClient()
-	if err := crcClient.List(context.TODO(), configList, client.InNamespace(operatortypes.AntreaNamespace), client.MatchingLabels(label)); err != nil {
+	if err := crcClient.List(context.TODO(), configList, client.InNamespace(r.coreNamespace()), client.MatchingLabels(label)); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		} else {
@@ -406,7 +418,7 @@ func (r *AntreaInstallReconciler) getAppliedOperConfig() (*operatorv1.AntreaInst
 		return nil, nil
 	}
 	antreaControllerDeployment := appsv1.Deployment{}
-	if err := crcClient.Get(context.TODO(), types.NamespacedName{Namespace: operatortypes.AntreaNamespace, Name: operatortypes.AntreaControllerDeploymentName}, &antreaControllerDeployment); err != nil {
+	if err := crcClient.Get(context.TODO(), types.NamespacedName{Namespace: r.coreNamespace(), Name: operatortypes.AntreaControllerDeploymentName}, &antreaControllerDeployment); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		} else {
@@ -424,11 +436,11 @@ func (r *AntreaInstallReconciler) getAppliedOperConfig() (*operatorv1.AntreaInst
 	return operConfig, nil
 }
 
-func deleteExistingPods(c client.Client, component string) error {
+func (r *AntreaInstallReconciler) deleteExistingPods(component string) error {
 	var period int64 = 0
 	policy := metav1.DeletePropagationBackground
 	label := map[string]string{"component": component}
-	err := c.DeleteAllOf(context.TODO(), &corev1.Pod{}, client.InNamespace(operatortypes.AntreaNamespace), client.MatchingLabels(label), client.PropagationPolicy(policy), client.GracePeriodSeconds(period))
+	err := r.Client.Default().CRClient().DeleteAllOf(context.TODO(), &corev1.Pod{}, client.InNamespace(r.coreNamespace()), client.MatchingLabels(label), client.PropagationPolicy(policy), client.GracePeriodSeconds(period))
 	if err != nil {
 		log.Error(err, fmt.Sprintf("failed to delete pods for component: %s", component))
 	}
@@ -458,6 +470,7 @@ func (r *AntreaInstallReconciler) prepareInventory(objs []*uns.Unstructured, clu
 	seen := make(map[configv1.ObjectReference]bool)
 	configMaps := make(map[string]interface{})
 	installKind := install.Object(r.installGVK).GroupVersionKind().GroupKind()
+	coreNamespace := r.coreNamespace()
 	for _, obj := range objs {
 		gvk := obj.GroupVersionKind()
 		mapping, err := r.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
@@ -505,19 +518,19 @@ func (r *AntreaInstallReconciler) prepareInventory(objs []*uns.Unstructured, clu
 		}
 		if gvk == appsv1.SchemeGroupVersion.WithKind("DaemonSet") {
 			inventory.daemonSets = append(inventory.daemonSets, key)
-			if key == (client.ObjectKey{Namespace: operatortypes.AntreaNamespace, Name: operatortypes.AntreaAgentDaemonSetName}) {
+			if key == (client.ObjectKey{Namespace: coreNamespace, Name: operatortypes.AntreaAgentDaemonSetName}) {
 				inventory.agent = obj
 			}
 		}
 		if gvk == appsv1.SchemeGroupVersion.WithKind("Deployment") {
 			inventory.deployments = append(inventory.deployments, key)
-			if key == (client.ObjectKey{Namespace: operatortypes.AntreaNamespace, Name: operatortypes.AntreaControllerDeploymentName}) {
+			if key == (client.ObjectKey{Namespace: coreNamespace, Name: operatortypes.AntreaControllerDeploymentName}) {
 				inventory.controller = obj
 			}
 		}
 	}
 	if inventory.agent == nil || inventory.controller == nil {
-		return nil, fmt.Errorf("bundle requires %s DaemonSet and %s Deployment in %s", operatortypes.AntreaAgentDaemonSetName, operatortypes.AntreaControllerDeploymentName, operatortypes.AntreaNamespace)
+		return nil, fmt.Errorf("bundle requires %s DaemonSet and %s Deployment in %s", operatortypes.AntreaAgentDaemonSetName, operatortypes.AntreaControllerDeploymentName, coreNamespace)
 	}
 	// A composed bundle rolls its own Pods through their workload template.
 	// This avoids deleting Pods by a component label shared with other owners.

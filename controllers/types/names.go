@@ -26,6 +26,7 @@ const (
 	ClusterOperatorNetworkName = "cluster"
 
 	AntreaNamespace                = "kube-system"
+	AntreaNamespaceRenderKey       = "AntreaNamespace"
 	AntreaAgentDaemonSetName       = "antrea-agent"
 	AntreaControllerDeploymentName = "antrea-controller"
 	AntreaConfigMapName            = "antrea-config"

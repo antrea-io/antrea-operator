@@ -32,7 +32,16 @@ type Config interface {
 	GenerateRenderData(operatorNetwork *ocoperv1.Network, operConfig *operatorv1.AntreaInstall) (*render.RenderData, error)
 }
 
-type ConfigOc struct{}
+type ConfigOc struct {
+	CoreNamespace string
+}
+
+func (c *ConfigOc) Namespace() string {
+	if c.CoreNamespace != "" {
+		return c.CoreNamespace
+	}
+	return types.AntreaNamespace
+}
 
 type ConfigK8s struct{}
 
@@ -190,10 +199,16 @@ func validateConfig(clusterConfig *configv1.Network, operConfig *operatorv1.Antr
 }
 
 func (c *ConfigOc) ValidateConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
+	if requested := operConfig.Spec.CoreNamespace; requested != "" && requested != c.Namespace() {
+		return fmt.Errorf("spec.coreNamespace %q does not match the configured OpenShift core namespace %q", requested, c.Namespace())
+	}
 	return validateConfig(clusterConfig, operConfig)
 }
 
 func (c *ConfigK8s) ValidateConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
+	if operConfig.Spec.CoreNamespace != "" {
+		return fmt.Errorf("spec.coreNamespace can only be set on OpenShift")
+	}
 	return validateConfig(clusterConfig, operConfig)
 }
 
@@ -327,6 +342,7 @@ func generateRenderData(operatorNetwork *ocoperv1.Network, operConfig *operatorv
 	renderData.Data[types.AntreaCNIConfigRenderKey] = operConfig.Spec.AntreaCNIConfig
 	renderData.Data[types.AntreaControllerConfigRenderKey] = operConfig.Spec.AntreaControllerConfig
 	renderData.Data[types.AntreaImageRenderKey] = operConfig.Spec.AntreaImage
+	renderData.Data[types.AntreaNamespaceRenderKey] = types.AntreaNamespace
 	if operatorNetwork == nil {
 		renderData.Data[types.CNIConfDirRenderKey] = gocni.DefaultNetDir
 		renderData.Data[types.CNIBinDirRenderKey] = gocni.DefaultCNIDir
@@ -344,5 +360,6 @@ func (c *ConfigK8s) GenerateRenderData(operatorNetwork *ocoperv1.Network, operCo
 
 func (c *ConfigOc) GenerateRenderData(operatorNetwork *ocoperv1.Network, operConfig *operatorv1.AntreaInstall) (*render.RenderData, error) {
 	renderData := generateRenderData(operatorNetwork, operConfig)
+	renderData.Data[types.AntreaNamespaceRenderKey] = c.Namespace()
 	return renderData, nil
 }
