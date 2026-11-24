@@ -14,12 +14,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1 "antrea.io/antrea-operator/api/v1"
-	"antrea.io/antrea-operator/controllers/types"
+	operatortypes "antrea.io/antrea-operator/controllers/types"
 )
 
 // Object returns the watch / read type for the distribution's install API.
@@ -35,7 +36,7 @@ func Object(gvk schema.GroupVersionKind) *unstructured.Unstructured {
 
 func Read(ctx context.Context, reader client.Reader, gvk schema.GroupVersionKind) (*unstructured.Unstructured, error) {
 	obj := Object(gvk)
-	key := client.ObjectKey{Namespace: types.OperatorNameSpace, Name: types.OperatorConfigName}
+	key := client.ObjectKey{Namespace: operatortypes.OperatorNameSpace, Name: operatortypes.OperatorConfigName}
 	if err := reader.Get(ctx, key, obj); err != nil {
 		return nil, err
 	}
@@ -97,6 +98,32 @@ func ReportCoreConditions(ctx context.Context, c client.Client, gvk schema.Group
 		return nil
 	}
 	return mergeConditions(ctx, c, gvk, core)
+}
+
+// ReportCoreAppliedGeneration records a successful OpenShift apply against
+// the same install instance and generation. It merges with operand status.
+func ReportCoreAppliedGeneration(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, uid types.UID, generation int64) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := Read(ctx, c, gvk)
+		if err != nil {
+			return err
+		}
+		if obj.GetUID() != uid || obj.GetGeneration() != generation {
+			return nil
+		}
+		last, found, err := unstructured.NestedInt64(obj.Object, "status", "coreAppliedGeneration")
+		if err != nil {
+			return err
+		}
+		if found && last == generation {
+			return nil
+		}
+		before := obj.DeepCopy()
+		if err := unstructured.SetNestedField(obj.Object, generation, "status", "coreAppliedGeneration"); err != nil {
+			return err
+		}
+		return c.Status().Patch(ctx, obj, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	})
 }
 
 func mergeConditions(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, updates []configv1.ClusterOperatorStatusCondition) error {

@@ -23,8 +23,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/go-logr/logr"
@@ -69,8 +71,9 @@ func (k8s *AdaptorK8s) SetupWithManager(r *AntreaInstallReconciler, mgr ctrl.Man
 func (oc *AdaptorOc) SetupWithManager(r *AntreaInstallReconciler, mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("antrea-core-install").
-		For(install.Object(r.installGVK)).
+		For(install.Object(r.installGVK), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&configv1.Network{}, &handler.EnqueueRequestForObject{}).
+		Watches(&ocoperv1.Network{}, &handler.EnqueueRequestForObject{}).
 		Complete(r)
 }
 
@@ -111,7 +114,8 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 	}
 
 	appliedConfig := r.AppliedOperConfig
-	if r.Status.CoreResources == nil && appliedConfig == nil {
+	openShift := clusterConfig != nil
+	if !openShift && r.Status.CoreResources == nil && appliedConfig == nil {
 		appliedConfig, err = r.getAppliedOperConfig()
 		if err != nil {
 			r.Status.SetDegraded(statusmanager.OperatorConfig, "InternalError", fmt.Sprintf("Failed to get current configurations: %v", err))
@@ -121,7 +125,7 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 	agentNeedChange, controllerNeedChange, imageChange := configutil.NeedApplyChange(appliedConfig, operConfig)
 	// A distribution's render may depend on fields outside the projection.
 	// Standalone keeps its existing comparison against the installed config.
-	if agentNeedChange || controllerNeedChange || r.Status.CoreResources != nil {
+	if openShift || agentNeedChange || controllerNeedChange || r.Status.CoreResources != nil {
 		objs, err := render.RenderDir(r.manifestDir, renderData)
 		if err != nil {
 			log.Error(err, "failed to render configuration")
@@ -129,6 +133,17 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 			return reconcile.Result{Requeue: true}, err
 		}
 
+		var operands openShiftOperands
+		if openShift {
+			operands, err = r.prepareOpenShiftOperands(objs, r.Adaptor.(*AdaptorOc).Config, clusterConfig, operConfig)
+			if err != nil {
+				r.Status.SetDegraded(statusmanager.OperatorConfig, "InvalidResourceBundle", err.Error())
+				return reconcile.Result{}, err
+			}
+			if operands.managedPSK != nil {
+				objs = append(objs, operands.managedPSK)
+			}
+		}
 		inventory, err := r.prepareInventory(objs, clusterConfig)
 		if err != nil {
 			r.Status.SetDegraded(statusmanager.OperatorConfig, "InvalidResourceBundle", err.Error())
@@ -137,8 +152,38 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 
 		r.SharedInfo.Lock()
 		defer r.SharedInfo.Unlock()
-		for _, obj := range objs {
+		if openShift {
+			if err := r.checkOpenShiftNamespace(); err != nil {
+				r.Status.SetDegraded(statusmanager.OperatorConfig, "CoreNamespaceBlocked", err.Error())
+				return reconcile.Result{}, err
+			}
+			if err := r.validateIPsecCredential(operands); err != nil {
+				r.Status.SetDegraded(statusmanager.OperatorConfig, "IPsecCredentialUnavailable", err.Error())
+				return reconcile.Result{}, err
+			}
+		}
+		applyOrder := objs
+		if openShift {
+			// Publish config and prerequisites before starting the rollout.
+			applyOrder = make([]*uns.Unstructured, 0, len(objs))
+			for _, obj := range objs {
+				if obj != inventory.agent && obj != inventory.controller {
+					applyOrder = append(applyOrder, obj)
+				}
+			}
+			applyOrder = append(applyOrder, inventory.controller, inventory.agent)
+		}
+		for _, obj := range applyOrder {
+			if openShift && obj == inventory.agent {
+				if err := r.stampIPsecCredential(operands); err != nil {
+					r.Status.SetDegraded(statusmanager.OperatorConfig, "IPsecCredentialUnavailable", err.Error())
+					return reconcile.Result{}, err
+				}
+			}
 			if err = apply.ApplyObject(context.TODO(), r.Client, obj, r.subcontroller); err != nil {
+				if obj == operands.managedPSK {
+					err = fmt.Errorf("could not apply managed IPsec credential Secret %s/%s (%s)", obj.GetNamespace(), obj.GetName(), apierrors.ReasonForError(err))
+				}
 				r.Status.SetDegraded(statusmanager.OperatorConfig, "ApplyObjectsError", fmt.Sprintf("Failed to apply operator configurations: %v", err))
 				return reconcile.Result{}, err
 			}
@@ -149,14 +194,14 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 		}
 
 		// Delete old antrea-agent and antrea-controller pods.
-		if r.Status.CoreResources == nil && r.AppliedOperConfig != nil && agentNeedChange && !imageChange {
+		if !openShift && r.Status.CoreResources == nil && r.AppliedOperConfig != nil && agentNeedChange && !imageChange {
 			if err = r.deleteExistingPods(operatortypes.AntreaAgentDaemonSetName); err != nil {
 				msg := fmt.Sprintf("DaemonSet %s is not using the latest configuration updates because: %v", operatortypes.AntreaAgentDaemonSetName, err)
 				r.Status.SetDegraded(statusmanager.OperatorConfig, "DeleteOldPodsError", msg)
 				return reconcile.Result{Requeue: true}, err
 			}
 		}
-		if r.Status.CoreResources == nil && r.AppliedOperConfig != nil && controllerNeedChange && !imageChange {
+		if !openShift && r.Status.CoreResources == nil && r.AppliedOperConfig != nil && controllerNeedChange && !imageChange {
 			if err = r.deleteExistingPods(operatortypes.AntreaControllerDeploymentName); err != nil {
 				msg := fmt.Sprintf("Deployment %s is not using the latest configuration updates because: %v", operatortypes.AntreaControllerDeploymentName, err)
 				r.Status.SetDegraded(statusmanager.OperatorConfig, "DeleteOldPodsError", msg)
@@ -180,7 +225,7 @@ func fetchAntreaInstall(r *AntreaInstallReconciler, request ctrl.Request) (*oper
 	// Status changes leave generation unchanged. A recreated install may
 	// reuse a generation but has a different UID.
 	applied := r.AppliedOperConfig
-	if request.Name == raw.GetName() && applied != nil && raw.GetGeneration() == applied.Generation && raw.GetUID() == applied.UID {
+	if r.SharedInfo.AntreaPlatform == "kubernetes" && request.Name == raw.GetName() && applied != nil && raw.GetGeneration() == applied.Generation && raw.GetUID() == applied.UID {
 		return nil, nil, nil
 	}
 	core, err := install.CoreConfig(raw)
@@ -249,24 +294,21 @@ func (oc *AdaptorOc) Reconcile(r *AntreaInstallReconciler, request ctrl.Request)
 		log.Error(err, "failed to get Cluster Network CR")
 		return reconcile.Result{Requeue: true}, err
 	}
-	if request.Name == clusterConfig.Name && r.AppliedClusterConfig != nil {
-		if reflect.DeepEqual(clusterConfig.Spec, r.AppliedClusterConfig.Spec) {
-			log.Info("no configuration change")
-			return reconcile.Result{}, nil
-		}
-	}
-
 	// Fetch the Network.operator.openshift.io instance
 	operatorNetwork := &ocoperv1.Network{}
 	err = r.Client.Default().CRClient().Get(context.TODO(), types.NamespacedName{Name: operatortypes.ClusterOperatorNetworkName}, operatorNetwork)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			r.Status.SetDegraded(statusmanager.OperatorConfig, "NoClusterNetworkOperatorConfig", fmt.Sprintf("Cluster network operator configuration not found"))
-			return reconcile.Result{}, nil
+			return reconcile.Result{RequeueAfter: ResyncPeriod}, nil
 		}
 		// Error reading the object - requeue the request.
 		log.Error(err, "Unable to retrieve Network.operator.openshift.io object")
 		return reconcile.Result{Requeue: true}, err
+	}
+	if err := configutil.ValidateOpenShiftNetwork(clusterConfig, operatorNetwork); err != nil {
+		r.Status.SetDegraded(statusmanager.ClusterConfig, "InvalidClusterNetwork", err.Error())
+		return reconcile.Result{RequeueAfter: ResyncPeriod}, nil
 	}
 
 	// Fetch antrea-install CR.
@@ -284,26 +326,28 @@ func (oc *AdaptorOc) Reconcile(r *AntreaInstallReconciler, request ctrl.Request)
 	}
 
 	// Update cluster network CR status.
-	clusterNetworkConfigChanged := configutil.HasClusterNetworkConfigChange(r.AppliedClusterConfig, clusterConfig)
-	defaultMTUChanged, curDefaultMTU, err := configutil.HasDefaultMTUChange(r.AppliedOperConfig, operConfig)
+	curDefaultMTU, err := configutil.DefaultMTU(operConfig)
 	if err != nil {
 		r.Status.SetDegraded(statusmanager.OperatorConfig, "UpdateNetworkStatusError", fmt.Sprintf("failed to check default MTU configuration: %v", err))
 		return reconcile.Result{Requeue: true}, err
 	}
-	if clusterNetworkConfigChanged || defaultMTUChanged {
-		if err = updateNetworkStatus(r.Client, clusterConfig, curDefaultMTU); err != nil {
-			r.Status.SetDegraded(statusmanager.ClusterConfig, "UpdateNetworkStatusError", fmt.Sprintf("Failed to update network status: %v", err))
-			return reconcile.Result{Requeue: true}, err
-		}
+	if err = updateNetworkStatus(r.Client.Default().CRClient(), clusterConfig, curDefaultMTU); err != nil {
+		r.Status.SetDegraded(statusmanager.ClusterConfig, "UpdateNetworkStatusError", fmt.Sprintf("Failed to update network status: %v", err))
+		return reconcile.Result{Requeue: true}, err
+	}
+	if err := install.ReportCoreAppliedGeneration(context.TODO(), r.Client.Default().CRClient(), r.installGVK, operConfig.UID, operConfig.Generation); err != nil {
+		r.Status.SetDegraded(statusmanager.OperatorConfig, "InstallStatusError", fmt.Sprintf("Failed to record the applied core generation: %v", err))
+		return reconcile.Result{}, err
 	}
 
 	r.Status.SetNotDegraded(statusmanager.ClusterConfig)
 	r.Status.SetNotDegraded(statusmanager.OperatorConfig)
+	r.Status.SetFromPods()
 
 	r.AppliedClusterConfig = clusterConfig
 	r.AppliedOperConfig = operConfig
 
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: ResyncPeriod}, nil
 }
 
 // AntreaInstallReconciler reconciles a AntreaInstall object
@@ -447,16 +491,19 @@ func (r *AntreaInstallReconciler) deleteExistingPods(component string) error {
 	return err
 }
 
-func updateNetworkStatus(c cnoclient.Client, clusterConfig *configv1.Network, defaultMTU int) error {
-	status := configutil.BuildNetworkStatus(clusterConfig, defaultMTU)
-	clusterConfig.Status = *status
-	if err := apply.ApplyObject(context.TODO(), c, clusterConfig, ""); err != nil {
-		log.Error(err, fmt.Sprintf("Could not apply (%s) %s/%s", clusterConfig.GroupVersionKind(),
-			clusterConfig.GetNamespace(), clusterConfig.GetName()))
-		return err
+func updateNetworkStatus(c client.Client, clusterConfig *configv1.Network, defaultMTU int) error {
+	desired := configutil.BuildNetworkStatus(clusterConfig, defaultMTU)
+	updated := clusterConfig.DeepCopy()
+	updated.Status.ServiceNetwork = desired.ServiceNetwork
+	updated.Status.ClusterNetwork = desired.ClusterNetwork
+	updated.Status.NetworkType = desired.NetworkType
+	updated.Status.ClusterNetworkMTU = desired.ClusterNetworkMTU
+	if reflect.DeepEqual(clusterConfig.Status, updated.Status) {
+		return nil
 	}
-	log.Info("Successfully updated Network Status")
-	return nil
+	// Network config has no /status subresource. Limit the patch to our
+	// observed network fields and re-reconcile on concurrent changes.
+	return c.Patch(context.TODO(), updated, client.MergeFromWithOptions(clusterConfig, client.MergeFromWithOptimisticLock{}))
 }
 
 type resourceInventory struct {
@@ -513,7 +560,7 @@ func (r *AntreaInstallReconciler) prepareInventory(objs []*uns.Unstructured, clu
 			}
 		}
 		key := client.ObjectKeyFromObject(obj)
-		if r.Status.CoreResources != nil && gvk == corev1.SchemeGroupVersion.WithKind("ConfigMap") {
+		if (clusterConfig != nil || r.Status.CoreResources != nil) && gvk == corev1.SchemeGroupVersion.WithKind("ConfigMap") {
 			configMaps[key.String()] = []interface{}{obj.Object["data"], obj.Object["binaryData"]}
 		}
 		if gvk == appsv1.SchemeGroupVersion.WithKind("DaemonSet") {
@@ -532,9 +579,9 @@ func (r *AntreaInstallReconciler) prepareInventory(objs []*uns.Unstructured, clu
 	if inventory.agent == nil || inventory.controller == nil {
 		return nil, fmt.Errorf("bundle requires %s DaemonSet and %s Deployment in %s", operatortypes.AntreaAgentDaemonSetName, operatortypes.AntreaControllerDeploymentName, coreNamespace)
 	}
-	// A composed bundle rolls its own Pods through their workload template.
+	// OpenShift and composed bundles roll Pods through their workload template.
 	// This avoids deleting Pods by a component label shared with other owners.
-	if r.Status.CoreResources != nil {
+	if clusterConfig != nil || r.Status.CoreResources != nil {
 		// Hash the rendered data, including distribution values. encoding/json
 		// orders map keys, so manifest order and metadata do not trigger rolls.
 		data, err := json.Marshal(configMaps)

@@ -34,8 +34,9 @@ func TestOpenShiftCoreNamespace(t *testing.T) {
 	const namespace = "antrea-system"
 	cfg := &config.ConfigOc{CoreNamespace: namespace}
 	install := &operatorv1.AntreaInstall{Spec: operatorv1.AntreaInstallSpec{
-		CoreNamespace: namespace,
-		AntreaImage:   "antrea:test",
+		CoreNamespace:   namespace,
+		AntreaImage:     "antrea:test",
+		AntreaCNIConfig: `{"name":"antrea","cniVersion":"0.3.1","plugins":[{"type":"antrea"}]}`,
 	}}
 	cluster := &configv1.Network{Spec: configv1.NetworkSpec{
 		ServiceNetwork: []string{"10.96.0.0/12"},

@@ -9,22 +9,17 @@ import (
 
 	"k8s.io/utils/net"
 
-	ctlconfig "antrea.io/antrea/pkg/config/controller"
-	"antrea.io/antrea/pkg/features"
 	gocni "github.com/containerd/go-cni"
 	configv1 "github.com/openshift/api/config/v1"
 	ocoperv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-network-operator/pkg/network"
 	"github.com/openshift/cluster-network-operator/pkg/render"
 	"gopkg.in/yaml.v2"
-	ctrl "sigs.k8s.io/controller-runtime"
 
 	operatorv1 "antrea.io/antrea-operator/api/v1"
 	"antrea.io/antrea-operator/controllers/types"
 	"antrea.io/antrea-operator/internal/version"
 )
-
-var log = ctrl.Log.WithName("config")
 
 type Config interface {
 	FillConfigs(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error
@@ -33,7 +28,8 @@ type Config interface {
 }
 
 type ConfigOc struct {
-	CoreNamespace string
+	CoreNamespace    string
+	DisableWireGuard bool
 }
 
 func (c *ConfigOc) Namespace() string {
@@ -47,7 +43,12 @@ type ConfigK8s struct{}
 
 func fillAgentConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
 	antreaAgentConfig := make(map[string]interface{})
-	err := yaml.Unmarshal([]byte(operConfig.Spec.AntreaAgentConfig), &antreaAgentConfig)
+	var err error
+	if clusterConfig != nil {
+		antreaAgentConfig, err = yamlMapping(operConfig.Spec.AntreaAgentConfig)
+	} else {
+		err = yaml.Unmarshal([]byte(operConfig.Spec.AntreaAgentConfig), &antreaAgentConfig)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to parse AntreaAgentConfig: %v", err)
 	}
@@ -57,11 +58,16 @@ func fillAgentConfig(clusterConfig *configv1.Network, operConfig *operatorv1.Ant
 			return errors.New("serviceCIDR should be specified on kubernetes.")
 		}
 	} else {
-		if serviceCIDR, ok := antreaAgentConfig[types.ServiceCIDROption].(string); !ok {
-			antreaAgentConfig[types.ServiceCIDROption] = clusterConfig.Spec.ServiceNetwork[0]
-		} else if found := inSlice(serviceCIDR, clusterConfig.Spec.ServiceNetwork); !found {
-			log.Info("WARNING: ServiceCIDROption is overwritten by cluster config")
-			antreaAgentConfig[types.ServiceCIDROption] = clusterConfig.Spec.ServiceNetwork[0]
+		antreaAgentConfig[types.ServiceCIDROption] = clusterConfig.Spec.ServiceNetwork[0]
+		delete(antreaAgentConfig, "serviceCIDRv6")
+		if len(clusterConfig.Spec.ServiceNetwork) == 2 {
+			for _, serviceCIDR := range clusterConfig.Spec.ServiceNetwork {
+				if net.IsIPv4CIDRString(serviceCIDR) {
+					antreaAgentConfig[types.ServiceCIDROption] = serviceCIDR
+				} else {
+					antreaAgentConfig["serviceCIDRv6"] = serviceCIDR
+				}
+			}
 		}
 	}
 	// Set default MTU.
@@ -77,100 +83,44 @@ func fillAgentConfig(clusterConfig *configv1.Network, operConfig *operatorv1.Ant
 	return nil
 }
 
-func fillControllerConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
-	var controllerConfig ctlconfig.ControllerConfig
-	err := yaml.Unmarshal([]byte(operConfig.Spec.AntreaControllerConfig), &controllerConfig)
-	if err != nil {
-		return fmt.Errorf("failed to parse AntreaControllerConfig: %v", err)
-	}
-
-	//Turn on NodeIPAM featureGate.
-	if controllerConfig.FeatureGates == nil {
-		controllerConfig.FeatureGates = make(map[string]bool)
-	}
-	controllerConfig.FeatureGates[string(features.NodeIPAM)] = true
-	controllerConfig.NodeIPAM.EnableNodeIPAM = true
-
-	if clusterConfig != nil {
-		ip4found := false
-		ip6found := false
-
-		for _, cidr := range clusterConfig.Spec.ClusterNetwork {
-			if net.IsIPv4CIDRString(cidr.CIDR) {
-				if !ip4found {
-					ip4found = true
-					controllerConfig.NodeIPAM.ClusterCIDRs = append(controllerConfig.NodeIPAM.ClusterCIDRs, cidr.CIDR)
-					controllerConfig.NodeIPAM.NodeCIDRMaskSizeIPv4 = int(cidr.HostPrefix)
-				}
-			} else {
-				if !ip6found {
-					ip6found = true
-					controllerConfig.NodeIPAM.ClusterCIDRs = append(controllerConfig.NodeIPAM.ClusterCIDRs, cidr.CIDR)
-					controllerConfig.NodeIPAM.NodeCIDRMaskSizeIPv6 = int(cidr.HostPrefix)
-				}
-			}
-		}
-
-		// Set service CIDR
-		ip4found = false
-		ip6found = false
-
-		for _, svcCIDR := range clusterConfig.Spec.ServiceNetwork {
-			if net.IsIPv4CIDRString(svcCIDR) {
-				if !ip4found {
-					ip4found = true
-					controllerConfig.NodeIPAM.ServiceCIDR = svcCIDR
-				}
-			} else {
-				if !ip6found {
-					ip6found = true
-					controllerConfig.NodeIPAM.ServiceCIDRv6 = svcCIDR
-				}
-			}
-		}
-	}
-
-	updatedAntreaControllerConfig, err := yaml.Marshal(controllerConfig)
-	if err != nil {
-		return fmt.Errorf("failed to fill configurations in AntreaControllerConfig: %v", err)
-	}
-	operConfig.Spec.AntreaControllerConfig = string(updatedAntreaControllerConfig)
-	return nil
-}
-
-func fillConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall, isOpenShift bool) error {
-	err := fillAgentConfig(clusterConfig, operConfig)
-	if err != nil {
-		return err
-	}
-
-	if isOpenShift {
-		err = fillControllerConfig(clusterConfig, operConfig)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Set Antrea image.
+func setLegacyImageDefault(operConfig *operatorv1.AntreaInstall) {
 	if operConfig.Spec.AntreaImage == "" {
 		operConfig.Spec.AntreaImage = types.DefaultAntreaImage
 	}
-
-	return nil
 }
 
 func (c *ConfigOc) FillConfigs(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
-	return fillConfig(clusterConfig, operConfig, true)
+	if err := validateClusterCIDRs(clusterConfig); err != nil {
+		return err
+	}
+	if err := fillAgentConfig(clusterConfig, operConfig); err != nil {
+		return err
+	}
+	if err := fillOpenShiftControllerConfig(clusterConfig, operConfig); err != nil {
+		return err
+	}
+	profile, err := c.encryptionProfile(operConfig, true)
+	if err != nil {
+		return err
+	}
+	if profile.Mode != EncryptionIPsec {
+		setLegacyImageDefault(operConfig)
+	}
+	return nil
 }
 
 func (c *ConfigK8s) FillConfigs(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
-	return fillConfig(clusterConfig, operConfig, false)
+	if err := fillAgentConfig(clusterConfig, operConfig); err != nil {
+		return err
+	}
+	setLegacyImageDefault(operConfig)
+	return nil
 }
 
-func validateConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
+func validateConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall, requireCommonImage bool) error {
 	var errs []error
 
-	if operConfig.Spec.AntreaImage == "" {
+	if requireCommonImage && operConfig.Spec.AntreaImage == "" {
 		errs = append(errs, fmt.Errorf("antreaImage option can not be empty"))
 	}
 
@@ -202,14 +152,20 @@ func (c *ConfigOc) ValidateConfig(clusterConfig *configv1.Network, operConfig *o
 	if requested := operConfig.Spec.CoreNamespace; requested != "" && requested != c.Namespace() {
 		return fmt.Errorf("spec.coreNamespace %q does not match the configured OpenShift core namespace %q", requested, c.Namespace())
 	}
-	return validateConfig(clusterConfig, operConfig)
+	if err := validateConfig(clusterConfig, operConfig, false); err != nil {
+		return err
+	}
+	if _, err := DefaultMTU(operConfig); err != nil {
+		return err
+	}
+	return validateOpenShiftCNI(operConfig.Spec.AntreaCNIConfig)
 }
 
 func (c *ConfigK8s) ValidateConfig(clusterConfig *configv1.Network, operConfig *operatorv1.AntreaInstall) error {
 	if operConfig.Spec.CoreNamespace != "" {
 		return fmt.Errorf("spec.coreNamespace can only be set on OpenShift")
 	}
-	return validateConfig(clusterConfig, operConfig)
+	return validateConfig(clusterConfig, operConfig, true)
 }
 
 func NeedApplyChange(preConfig, curConfig *operatorv1.AntreaInstall) (agentNeedChange, controllerNeedChange, imageChange bool) {
@@ -256,33 +212,31 @@ func HasClusterNetworkConfigChange(preConfig, curConfig *configv1.Network) bool 
 	return false
 }
 
+func DefaultMTU(operConfig *operatorv1.AntreaInstall) (int, error) {
+	values, err := yamlMapping(operConfig.Spec.AntreaAgentConfig)
+	if err != nil {
+		return types.DefaultMTU, err
+	}
+	mtu, ok := values[types.DefaultMTUOption].(int)
+	if !ok || mtu < 0 || mtu > 65535 {
+		return types.DefaultMTU, fmt.Errorf("defaultMTU must be an integer between 0 and 65535")
+	}
+	return mtu, nil
+}
+
 func HasDefaultMTUChange(preConfig, curConfig *operatorv1.AntreaInstall) (bool, int, error) {
-
-	curAntreaAgentConfig := make(map[string]interface{})
-	err := yaml.Unmarshal([]byte(curConfig.Spec.AntreaAgentConfig), &curAntreaAgentConfig)
+	current, err := DefaultMTU(curConfig)
 	if err != nil {
-		return false, types.DefaultMTU, err
+		return false, current, err
 	}
-	curDefaultMTU, ok := curAntreaAgentConfig[types.DefaultMTUOption]
-	if !ok {
-		return false, types.DefaultMTU, fmt.Errorf("%s option can not be empty", types.DefaultMTUOption)
-	}
-
 	if preConfig == nil {
-		return true, curDefaultMTU.(int), nil
+		return true, current, nil
 	}
-
-	preAntreaAgentConfig := make(map[string]interface{})
-	err = yaml.Unmarshal([]byte(preConfig.Spec.AntreaAgentConfig), &preAntreaAgentConfig)
+	previous, err := DefaultMTU(preConfig)
 	if err != nil {
-		return false, types.DefaultMTU, err
+		return false, current, err
 	}
-	preDefaultMTU, ok := preAntreaAgentConfig[types.DefaultMTUOption]
-	if !ok {
-		return false, types.DefaultMTU, fmt.Errorf("%s option can not be empty", types.DefaultMTUOption)
-	}
-
-	return preDefaultMTU != curDefaultMTU, curDefaultMTU.(int), nil
+	return current != previous, current, nil
 }
 
 func BuildNetworkStatus(clusterConfig *configv1.Network, defaultMTU int) *configv1.NetworkStatus {
@@ -342,6 +296,8 @@ func generateRenderData(operatorNetwork *ocoperv1.Network, operConfig *operatorv
 	renderData.Data[types.AntreaCNIConfigRenderKey] = operConfig.Spec.AntreaCNIConfig
 	renderData.Data[types.AntreaControllerConfigRenderKey] = operConfig.Spec.AntreaControllerConfig
 	renderData.Data[types.AntreaImageRenderKey] = operConfig.Spec.AntreaImage
+	renderData.Data[types.AntreaAgentImageRenderKey] = operConfig.Spec.AntreaImage
+	renderData.Data[types.AntreaControllerImageRenderKey] = operConfig.Spec.AntreaImage
 	renderData.Data[types.AntreaNamespaceRenderKey] = types.AntreaNamespace
 	if operatorNetwork == nil {
 		renderData.Data[types.CNIConfDirRenderKey] = gocni.DefaultNetDir
@@ -361,5 +317,11 @@ func (c *ConfigK8s) GenerateRenderData(operatorNetwork *ocoperv1.Network, operCo
 func (c *ConfigOc) GenerateRenderData(operatorNetwork *ocoperv1.Network, operConfig *operatorv1.AntreaInstall) (*render.RenderData, error) {
 	renderData := generateRenderData(operatorNetwork, operConfig)
 	renderData.Data[types.AntreaNamespaceRenderKey] = c.Namespace()
+	if image := operConfig.Spec.AntreaAgentImage; image != "" {
+		renderData.Data[types.AntreaAgentImageRenderKey] = image
+	}
+	if image := operConfig.Spec.AntreaControllerImage; image != "" {
+		renderData.Data[types.AntreaControllerImageRenderKey] = image
+	}
 	return renderData, nil
 }

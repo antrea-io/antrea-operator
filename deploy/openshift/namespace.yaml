@@ -1,5 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  labels: {name: antrea-operator, openshift.io/run-level: '0'}
+  labels:
+    name: antrea-operator
+    pod-security.kubernetes.io/enforce: privileged
   name: antrea-operator

@@ -45,6 +45,28 @@ type AntreaInstallSpec struct {
 	// operator startup for the OpenShift core workloads.
 	// +optional
 	CoreNamespace string `json:"coreNamespace,omitempty"`
+
+	// AntreaAgentImage overrides the common image on OpenShift.
+	// +optional
+	AntreaAgentImage string `json:"antreaAgentImage,omitempty"`
+
+	// AntreaControllerImage overrides the common image on OpenShift.
+	// +optional
+	AntreaControllerImage string `json:"antreaControllerImage,omitempty"`
+
+	// TrafficEncryptionMode selects the OpenShift agent's traffic encryption.
+	// +optional
+	TrafficEncryptionMode string `json:"trafficEncryptionMode,omitempty"`
+
+	// PSK is the legacy inline preshared key for IPsec IKE. Use a Secret
+	// reference for new installs.
+	// +optional
+	PSK string `json:"psk,omitempty"`
+
+	// IPsecPSKSecretName names the external Secret with key psk in the core
+	// namespace. It is mutually exclusive with PSK.
+	// +optional
+	IPsecPSKSecretName string `json:"ipsecPSKSecretName,omitempty"`
 }
 
 // AntreaInstallStatus defines the observed state of AntreaInstall
@@ -56,6 +78,11 @@ type AntreaInstallStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status
 	// +optional
 	Conditions []InstallCondition `json:"conditions,omitempty"`
+
+	// CoreAppliedGeneration is the OpenShift install generation last applied
+	// by core. Workload availability is reported by the conditions.
+	// +optional
+	CoreAppliedGeneration int64 `json:"coreAppliedGeneration,omitempty"`
 }
 
 // +kubebuilder:object:generate=false
