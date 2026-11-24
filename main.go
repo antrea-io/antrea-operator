@@ -4,14 +4,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 
 	configv1 "github.com/openshift/api/config/v1"
 	ocoperv1 "github.com/openshift/api/operator/v1"
-	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
-	"github.com/openshift/cluster-network-operator/pkg/names"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -21,9 +20,6 @@ import (
 
 	operatorv1 "antrea.io/antrea-operator/api/v1"
 	"antrea.io/antrea-operator/controllers"
-	"antrea.io/antrea-operator/controllers/sharedinfo"
-	"antrea.io/antrea-operator/controllers/statusmanager"
-	"antrea.io/antrea-operator/controllers/types"
 	"antrea.io/antrea-operator/internal/version"
 	// +kubebuilder:scaffold:imports
 )
@@ -71,39 +67,8 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-	sharedInfo, err := sharedinfo.New(mgr)
-	if err != nil {
-		setupLog.Error(err, "unable to get shareinfo")
-		os.Exit(1)
-	}
-	statusManager, err := statusmanager.New(mgr.GetClient(), mgr.GetRESTMapper(), types.AntreaClusterOperatorName, types.OperatorNameSpace, version.GetVersion(), sharedInfo)
-	if err != nil {
-		setupLog.Error(err, "unable to get status manager")
-		os.Exit(1)
-	}
-	cnoClient, err := cnoclient.NewClient(cfg, cfg, names.DefaultClusterName, nil)
-	if err != nil {
-		setupLog.Error(err, "fail to create client")
-		os.Exit(1)
-	}
-	controller, err := controllers.New(mgr, statusManager, sharedInfo, cnoClient)
-	if err != nil {
-		setupLog.Error(err, "unable to get controller")
-		os.Exit(1)
-	}
-	if err = controller.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AntreaInstall")
-		os.Exit(1)
-	}
-	// +kubebuilder:scaffold:builder
-	if err = (&controllers.PodReconciler{
-		Client:     cnoClient,
-		Log:        ctrl.Log.WithName("controllers").WithName("Pod"),
-		Scheme:     mgr.GetScheme(),
-		Status:     statusManager,
-		SharedInfo: sharedInfo,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AntreaInstall")
+	if err := controllers.RegisterCore(context.Background(), mgr, controllers.CoreOptions{}); err != nil {
+		setupLog.Error(err, "unable to register core controllers")
 		os.Exit(1)
 	}
 

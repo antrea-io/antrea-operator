@@ -9,11 +9,11 @@ import (
 	"sync"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	operatorv1 "antrea.io/antrea-operator/api/v1"
+	"antrea.io/antrea-operator/controllers/install"
 	operatortypes "antrea.io/antrea-operator/controllers/types"
 )
 
@@ -28,13 +28,15 @@ type SharedInfo struct {
 }
 
 func New(mgr manager.Manager) (*SharedInfo, error) {
-	reader := mgr.GetAPIReader()
-	antreaInstallName := types.NamespacedName{
-		Name:      operatortypes.OperatorConfigName,
-		Namespace: operatortypes.OperatorNameSpace,
+	return NewForInstall(context.Background(), mgr, schema.GroupVersionKind{})
+}
+
+func NewForInstall(ctx context.Context, mgr manager.Manager, gvk schema.GroupVersionKind) (*SharedInfo, error) {
+	obj, err := install.Read(ctx, mgr.GetAPIReader(), gvk)
+	if err != nil {
+		return nil, err
 	}
-	antreaInstall := &operatorv1.AntreaInstall{}
-	err := reader.Get(context.TODO(), antreaInstallName, antreaInstall)
+	antreaInstall, err := install.CoreConfig(obj)
 	if err != nil {
 		log.Error(err, "failed to get antrea-install", "namespace", operatortypes.OperatorNameSpace, "name", operatortypes.OperatorConfigName)
 		return nil, err

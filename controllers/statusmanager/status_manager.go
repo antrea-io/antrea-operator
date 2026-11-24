@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -25,10 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	operatorv1 "antrea.io/antrea-operator/api/v1"
+	"antrea.io/antrea-operator/controllers/install"
 	"antrea.io/antrea-operator/controllers/sharedinfo"
-	operatortypes "antrea.io/antrea-operator/controllers/types"
-	"antrea.io/antrea-operator/internal/version"
 )
 
 var log = logf.Log.WithName("status_manager")
@@ -62,9 +61,12 @@ type StatusManager struct {
 
 	failing [maxStatusLevel]*configv1.ClusterOperatorStatusCondition
 
-	daemonSets     []types.NamespacedName
-	deployments    []types.NamespacedName
-	relatedObjects []configv1.ObjectReference
+	daemonSets  []types.NamespacedName
+	deployments []types.NamespacedName
+	InstallGVK  schema.GroupVersionKind
+	// CoreResources is the immutable set of core object identities declared by
+	// a distribution. A nil map selects the standalone manifest.
+	CoreResources map[configv1.ObjectReference]bool
 
 	OperatorNamespace string
 	AdaptorName       string
@@ -95,54 +97,92 @@ func New(client client.Client, mapper meta.RESTMapper, name, operatorNamespace, 
 	return &status, nil
 }
 
-// deleteRelatedObjects checks for related objects attached to ClusterOperator and deletes
-// whatever is not been rendered from manifests. This is a mechanism to cleanup objects
-// that are no longer needed and are probably present from a previous version
-func (status *StatusManager) deleteRelatedObjectsNotRendered(co *configv1.ClusterOperator) {
-	if status.relatedObjects == nil {
-		return
+const (
+	OperandLabel = "operator.antrea.io/operand"
+	CoreOperand  = "core"
+)
+
+// syncRelatedObjects publishes the successfully applied inventory. Keep other
+// controllers' references and unmarked legacy objects until explicit handover.
+func (status *StatusManager) syncRelatedObjects(ctx context.Context, desired []configv1.ObjectReference) error {
+	if status.AdaptorName != "openshift" || desired == nil {
+		return nil
 	}
-
-	for _, currentObj := range co.Status.RelatedObjects {
-		var found bool = false
-		for _, renderedObj := range status.relatedObjects {
-			found = reflect.DeepEqual(currentObj, renderedObj)
-
-			if found {
-				break
+	seen := make(map[configv1.ObjectReference]bool, len(desired))
+	for _, ref := range desired {
+		seen[ref] = true
+	}
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: status.name}}
+		err := status.client.Get(ctx, client.ObjectKeyFromObject(co), co)
+		if k8serrors.IsNotFound(err) {
+			if err := status.client.Create(ctx, co); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		next := append([]configv1.ObjectReference(nil), desired...)
+		for _, ref := range co.Status.RelatedObjects {
+			if seen[ref] {
+				continue
+			}
+			removed, err := status.prune(ctx, ref)
+			if err != nil {
+				return err
+			}
+			if !removed {
+				next = append(next, ref)
 			}
 		}
-		if !found {
-			gvr := schema.GroupVersionResource{
-				Group:    currentObj.Group,
-				Resource: currentObj.Resource,
-			}
-			gvk, err := status.mapper.KindFor(gvr)
-			if err != nil {
-				log.Error(err, "Error getting GVK of object for deletion")
-				status.relatedObjects = append(status.relatedObjects, currentObj)
-				continue
-			}
-			if gvk.Kind == "Namespace" && gvk.Group == "" {
-				// BZ 1820472: During SDN migration, deleting a namespace object may get stuck in 'Terminating' forever if the cluster network doesn't working as expected.
-				// We choose to not delete the namespace here but to ask user do it manually after the cluster is back to normal state.
-				log.Info("Object Kind is Namespace, skip")
-				continue
-			}
-			objToDelete := &uns.Unstructured{}
-			objToDelete.SetName(currentObj.Name)
-			objToDelete.SetNamespace(currentObj.Namespace)
-			objToDelete.SetGroupVersionKind(gvk)
-			err = status.client.Delete(context.TODO(), objToDelete, client.PropagationPolicy("Background"))
-			if err != nil {
-				log.Error(err, "Error deleting related object")
-				if !k8serrors.IsNotFound(err) {
-					status.relatedObjects = append(status.relatedObjects, currentObj)
+		// A previous apply can be interrupted before inventory publication.
+		// Retire marked objects from that attempt even if the install changed
+		// while the manager was down. Only recorded references are reported.
+		tracked := make(map[configv1.ObjectReference]bool, len(co.Status.RelatedObjects))
+		for _, ref := range co.Status.RelatedObjects {
+			tracked[ref] = true
+		}
+		for ref := range status.CoreResources {
+			if !seen[ref] && !tracked[ref] {
+				if _, err := status.prune(ctx, ref); err != nil {
+					return err
 				}
-				continue
 			}
 		}
+		if reflect.DeepEqual(co.Status.RelatedObjects, next) {
+			return nil
+		}
+		co.Status.RelatedObjects = next
+		return status.client.Status().Update(ctx, co)
+	})
+}
+
+func (status *StatusManager) prune(ctx context.Context, ref configv1.ObjectReference) (bool, error) {
+	if (status.CoreResources != nil && !status.CoreResources[ref]) || (ref.Group == "" && ref.Resource == "namespaces") {
+		return false, nil
 	}
+	gvk, err := status.mapper.KindFor(schema.GroupVersionResource{Group: ref.Group, Resource: ref.Resource})
+	if err != nil {
+		// An API may be absent or undiscoverable during an upgrade. Keep its
+		// reference available for handover.
+		return false, nil
+	}
+	obj := &uns.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	err = status.client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj)
+	if k8serrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if obj.GetLabels()[OperandLabel] != CoreOperand {
+		return false, nil
+	}
+	// A replacement, relabel, or concurrent handover invalidates the delete.
+	uid, rv := obj.GetUID(), obj.GetResourceVersion()
+	err = status.client.Delete(ctx, obj, client.PropagationPolicy("Background"), client.Preconditions{UID: &uid, ResourceVersion: &rv})
+	return err == nil || k8serrors.IsNotFound(err), client.IgnoreNotFound(err)
 }
 
 func (status *StatusManager) setConditions(progressing []string, reachedAvailableLevel bool) {
@@ -177,8 +217,16 @@ func (status *StatusManager) setConditions(progressing []string, reachedAvailabl
 
 func (status *StatusManager) setClusterOperatorConditions(co *configv1.ClusterOperator, reachedAvailableLevel bool, conditions *[]configv1.ClusterOperatorStatusCondition) {
 	if reachedAvailableLevel {
-		co.Status.Versions = []configv1.OperandVersion{
-			{Name: "operator", Version: version.GetVersion()},
+		found := false
+		for i := range co.Status.Versions {
+			if co.Status.Versions[i].Name == "operator" {
+				co.Status.Versions[i].Version = status.version
+				found = true
+				break
+			}
+		}
+		if !found {
+			co.Status.Versions = append(co.Status.Versions, configv1.OperandVersion{Name: "operator", Version: status.version})
 		}
 	}
 	status.CombineConditions(&co.Status.Conditions, conditions)
@@ -204,23 +252,33 @@ func (status *StatusManager) setClusterOperatorConditions(co *configv1.ClusterOp
 
 // Set updates the AntreaInstall.Status with the provided conditions for platform kubernetes.
 func (adaptor *StatusK8s) set(status *StatusManager, reachedAvailableLevel bool, conditions ...configv1.ClusterOperatorStatusCondition) {
-	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		antreaInstall := &operatorv1.AntreaInstall{}
-		err := status.client.Get(context.TODO(), types.NamespacedName{Namespace: operatortypes.OperatorNameSpace, Name: operatortypes.OperatorConfigName}, antreaInstall)
-		if err != nil {
-			log.Error(err, "Failed to get antreaInstall")
-			return err
-		}
-		co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: status.name}}
-		oldStatus := antreaInstall.Status.DeepCopy()
-		status.setClusterOperatorConditions(co, reachedAvailableLevel, &conditions)
-		if reflect.DeepEqual(oldStatus.Conditions, co.Status.Conditions) {
-			return nil
-		}
-		err = status.setAntreaInstallStatus(&co.Status.Conditions)
-		return err
-	})
+	co := &configv1.ClusterOperator{}
+	obj, err := install.Read(context.TODO(), status.client, status.InstallGVK)
 	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			log.Error(err, "Failed to read AntreaInstall")
+		}
+		return
+	}
+	// Seed Available / Progressing so startup and transition logic sees the
+	// preceding state, even when this call updates only Degraded.
+	raw, _, err := uns.NestedSlice(obj.Object, "status", "conditions")
+	if err != nil {
+		log.Error(err, "Failed to read install conditions")
+		return
+	}
+	for _, item := range raw {
+		fields, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var c configv1.ClusterOperatorStatusCondition
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(fields, &c); err == nil {
+			co.Status.Conditions = append(co.Status.Conditions, c)
+		}
+	}
+	status.setClusterOperatorConditions(co, reachedAvailableLevel, &conditions)
+	if err := status.setAntreaInstallStatus(co.Status.Conditions); err != nil {
 		log.Error(err, "Failed to set AntreaInstall")
 	}
 }
@@ -230,60 +288,35 @@ func (adaptor *StatusOc) set(status *StatusManager, reachedAvailableLevel bool, 
 	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: status.name}}
 		err := status.client.Get(context.TODO(), types.NamespacedName{Name: status.name}, co)
-		isNotFound := k8serrors.IsNotFound(err)
-		if err != nil && !isNotFound {
+		if k8serrors.IsNotFound(err) {
+			if err := status.client.Create(context.TODO(), co); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
 		oldStatus := co.Status.DeepCopy()
-		status.deleteRelatedObjectsNotRendered(co)
-		if status.relatedObjects != nil {
-			co.Status.RelatedObjects = status.relatedObjects
-		}
 		status.setClusterOperatorConditions(co, reachedAvailableLevel, &conditions)
 		if reflect.DeepEqual(*oldStatus, co.Status) {
-			return nil
+			return status.setAntreaInstallStatus(co.Status.Conditions)
 		}
 		buf, err := yaml.Marshal(co.Status.Conditions)
 		if err != nil {
 			buf = []byte(fmt.Sprintf("(failed to convert to YAML: %s)", err))
 		}
-		if isNotFound {
-			if err := status.client.Create(context.TODO(), co); err != nil {
-				return err
-			}
-			log.Info(fmt.Sprintf("Created ClusterOperator with conditions:\n%s", string(buf)))
-			return nil
-		}
 		if err := status.client.Status().Update(context.TODO(), co); err != nil {
 			return err
 		}
 		log.Info(fmt.Sprintf("Updated ClusterOperator with conditions:\n%s", string(buf)))
-		err = status.setAntreaInstallStatus(&co.Status.Conditions)
-		return err
+		return status.setAntreaInstallStatus(co.Status.Conditions)
 	})
 	if err != nil {
 		log.Error(err, "Failed to set ClusterOperator")
 	}
 }
 
-func (status *StatusManager) setAntreaInstallStatus(conditions *[]configv1.ClusterOperatorStatusCondition) error {
-	antreaInstall := &operatorv1.AntreaInstall{}
-	err := status.client.Get(context.TODO(), types.NamespacedName{Namespace: operatortypes.OperatorNameSpace, Name: operatortypes.OperatorConfigName}, antreaInstall)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			log.Info("AntreaInstall not found, skipping set AntreaInstall status")
-			return nil
-		}
-		log.Error(err, "failed to get AntreaInstall")
-		return err
-	}
-	antreaInstallPatch := client.MergeFrom(antreaInstall.DeepCopy())
-	antreaInstall.Status.Conditions = *conditions
-	if err := status.client.Status().Patch(context.TODO(), antreaInstall, antreaInstallPatch); err != nil {
-		log.Error(err, "failed to set AntreaInstall")
-		return err
-	}
-	return err
+func (status *StatusManager) setAntreaInstallStatus(conditions []configv1.ClusterOperatorStatusCondition) error {
+	return client.IgnoreNotFound(install.ReportCoreConditions(context.TODO(), status.client, status.InstallGVK, conditions))
 }
 
 func (status *StatusManager) CombineConditions(conditions *[]configv1.ClusterOperatorStatusCondition,
@@ -368,5 +401,19 @@ func (status *StatusManager) SetDeployments(deployments []types.NamespacedName) 
 func (status *StatusManager) SetRelatedObjects(relatedObjects []configv1.ObjectReference) {
 	status.Lock()
 	defer status.Unlock()
-	status.relatedObjects = relatedObjects
+	if err := status.syncRelatedObjects(context.TODO(), relatedObjects); err != nil {
+		log.Error(err, "Failed to sync core resource inventory")
+	}
+}
+
+// SetInventory publishes all three views of a successfully applied bundle.
+func (status *StatusManager) SetInventory(ds, deps []types.NamespacedName, related []configv1.ObjectReference) error {
+	status.Lock()
+	defer status.Unlock()
+	if err := status.syncRelatedObjects(context.TODO(), related); err != nil {
+		return err
+	}
+	status.daemonSets = ds
+	status.deployments = deps
+	return nil
 }

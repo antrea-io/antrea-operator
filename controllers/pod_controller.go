@@ -34,15 +34,17 @@ var ResyncPeriod = 2 * time.Minute
 
 // PodReconciler reconciles a Pod object
 type PodReconciler struct {
-	Client     cnocient.Client
-	Log        logr.Logger
-	Scheme     *runtime.Scheme
-	Status     *statusmanager.StatusManager
-	SharedInfo *sharedinfo.SharedInfo
+	subcontroller string
+	Client        cnocient.Client
+	Log           logr.Logger
+	Scheme        *runtime.Scheme
+	Status        *statusmanager.StatusManager
+	SharedInfo    *sharedinfo.SharedInfo
 }
 
 func (r *PodReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		Named("antrea-core-workloads").
 		For(&appsv1.DaemonSet{}).
 		Watches(&appsv1.Deployment{}, &handler.EnqueueRequestForObject{}).
 		Complete(r)
@@ -53,6 +55,8 @@ func (r *PodReconciler) Reconcile(ctx context.Context, request reconcile.Request
 	reqLogger := r.Log.WithValues("Request.Namespace", request.Namespace, "Request.Name", request.Name)
 	reqLogger.Info("Reconciling pod update")
 
+	r.SharedInfo.Lock()
+	defer r.SharedInfo.Unlock()
 	if !r.isAntreaResource(&request) {
 		return reconcile.Result{}, nil
 	}
@@ -80,8 +84,6 @@ func (r *PodReconciler) isAntreaResource(request *reconcile.Request) bool {
 }
 
 func (r *PodReconciler) recreateResourceIfNotExist(request *reconcile.Request) error {
-	r.SharedInfo.Lock()
-	defer r.SharedInfo.Unlock()
 	var curObject client.Object
 	var objectSpec *uns.Unstructured
 	if request.Name == r.SharedInfo.AntreaAgentDaemonSetSpec.GetName() && request.Namespace == r.SharedInfo.AntreaAgentDaemonSetSpec.GetNamespace() {
@@ -104,7 +106,7 @@ func (r *PodReconciler) recreateResourceIfNotExist(request *reconcile.Request) e
 		r.Log.Info(fmt.Sprintf("K8s resource - '%s' already exists", request.Name))
 		return nil
 	}
-	if err = apply.ApplyObject(context.TODO(), r.Client, objectSpec, ""); err != nil {
+	if err = apply.ApplyObject(context.TODO(), r.Client, objectSpec, r.subcontroller); err != nil {
 		r.Log.Error(
 			err, fmt.Sprintf("could not apply (%s) %s/%s",
 				objectSpec.GroupVersionKind(), objectSpec.GetNamespace(), objectSpec.GetName()))
