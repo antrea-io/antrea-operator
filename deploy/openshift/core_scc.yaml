@@ -1,0 +1,52 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: antrea-core-scc
+  namespace: kube-system
+rules:
+- apiGroups: [security.openshift.io]
+  resources: [securitycontextconstraints]
+  resourceNames: [privileged]
+  verbs: [use]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: antrea-core-scc
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: antrea-core-scc
+subjects:
+- kind: ServiceAccount
+  name: antrea-agent
+  namespace: kube-system
+- kind: ServiceAccount
+  name: antrea-controller
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: antrea-core-credential
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [antrea-ipsec-operator-psk]
+  verbs: [delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: antrea-core-credential
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: antrea-core-credential
+subjects:
+- kind: ServiceAccount
+  name: antrea-operator
+  namespace: antrea-operator

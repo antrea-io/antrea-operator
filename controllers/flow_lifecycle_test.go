@@ -60,6 +60,7 @@ func TestFlowPartialApplyOwnershipAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	status.RecoverableResources = refs
 	for _, ref := range refs {
 		status.FlowResources[ref] = true
 	}
@@ -234,7 +235,7 @@ func TestFlowStatusWaitsForAgentsReplicaAndTermination(t *testing.T) {
 func TestFlowRevisionsAndDeclaredCoreInventory(t *testing.T) {
 	const ns = "antrea-system"
 	cfg := &config.ConfigOc{CoreNamespace: ns}
-	raw := &operatorv1.AntreaInstall{Spec: operatorv1.AntreaInstallSpec{AntreaAgentConfig: "featureGates:\n  Egress: true\n", AntreaImage: "agent:test"}}
+	raw := &operatorv1.AntreaInstall{Spec: operatorv1.AntreaInstallSpec{AntreaAgentConfig: "featureGates:\n  Egress: true\n", AntreaImage: "agent:test", TrafficEncryptionMode: "ipsec", IPsecPSKSecretName: "user-psk", AntreaCNIConfig: `{"name":"antrea","cniVersion":"0.3.1","plugins":[{"type":"antrea"}]}`}}
 	cluster := &configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster", UID: "network-uid"}, Spec: configv1.NetworkSpec{ServiceNetwork: []string{"172.30.0.0/16"}, ClusterNetwork: []configv1.ClusterNetworkEntry{{CIDR: "10.128.0.0/14", HostPrefix: 23}}, NetworkType: "Antrea"}}
 	scheme := runtime.NewScheme()
 	if err := configv1.Install(scheme); err != nil {
@@ -273,6 +274,13 @@ func TestFlowRevisionsAndDeclaredCoreInventory(t *testing.T) {
 		base, err = flow.EnsureDestinationCRD(base)
 		if err != nil {
 			t.Fatal(err)
+		}
+		operands, err := r.prepareOpenShiftOperands(append(base, f...), cfg, cluster, projected)
+		if err != nil {
+			return "", "", err
+		}
+		if operands.encryption.PSKSecretName != raw.Spec.IPsecPSKSecretName || operands.managedPSK != nil {
+			t.Fatal("flow configuration changed IPsec ownership")
 		}
 		for _, obj := range append(base, f...) {
 			gvk := obj.GroupVersionKind()
@@ -328,6 +336,11 @@ func TestFlowRevisionsAndDeclaredCoreInventory(t *testing.T) {
 	if err != nil || restored != off {
 		t.Fatalf("disable: %s %v", restored, err)
 	}
+	raw.Spec.IPsecPSKSecretName = "flow-aggregator-client-tls"
+	if _, _, err := observe(true); err == nil {
+		t.Fatal("accepted an IPsec credential sharing a reserved flow identity")
+	}
+	raw.Spec.IPsecPSKSecretName = "user-psk"
 	delete(r.Status.CoreResources, flowRefs[0])
 	if _, _, err := observe(true); err == nil {
 		t.Fatal("accepted undeclared flow object")

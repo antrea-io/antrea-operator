@@ -42,11 +42,17 @@ spec:
               antreaAgentConfig:
                 description: AntreaAgentConfig holds the configurations for antrea-agent.
                 type: string
+              antreaAgentImage:
+                description: AntreaAgentImage overrides the common image on OpenShift.
+                type: string
               antreaCNIConfig:
                 description: AntreaCNIConfig holds the configuration of CNI.
                 type: string
               antreaControllerConfig:
                 description: AntreaControllerConfig holds the configurations for antrea-controller.
+                type: string
+              antreaControllerImage:
+                description: AntreaControllerImage overrides the common image on OpenShift.
                 type: string
               antreaImage:
                 description: AntreaImage is the Docker image name used by antrea-agent
@@ -91,6 +97,20 @@ spec:
                 required:
                 - enabled
                 type: object
+              ipsecPSKSecretName:
+                description: |-
+                  IPsecPSKSecretName names the external Secret with key psk in the core
+                  namespace. It is mutually exclusive with PSK.
+                type: string
+              psk:
+                description: |-
+                  PSK is the legacy inline preshared key for IPsec IKE. Use a Secret
+                  reference for new installs.
+                type: string
+              trafficEncryptionMode:
+                description: TrafficEncryptionMode selects the OpenShift agent's traffic
+                  encryption.
+                type: string
             required:
             - antreaAgentConfig
             - antreaCNIConfig
@@ -134,6 +154,12 @@ spec:
                   - type
                   type: object
                 type: array
+              coreAppliedGeneration:
+                description: |-
+                  CoreAppliedGeneration is the OpenShift install generation last applied
+                  by core. Workload availability is reported by the conditions.
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

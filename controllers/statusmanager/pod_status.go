@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,6 +89,9 @@ func (status *StatusManager) SetFromPods() {
 		} else if ds.Status.NumberAvailable == 0 { // NOTE: update this if we ever expect empty (unscheduled) daemonsets ~cdc
 			progressing = append(progressing, fmt.Sprintf("DaemonSet %q is not yet scheduled on any nodes", dsName.String()))
 			dsProgressing = true
+		} else if status.AdaptorName == "openshift" && ds.Status.NumberAvailable < ds.Status.DesiredNumberScheduled {
+			progressing = append(progressing, fmt.Sprintf("DaemonSet %q is waiting for available agents (%d of %d)", dsName.String(), ds.Status.NumberAvailable, ds.Status.DesiredNumberScheduled))
+			dsProgressing = true
 		} else if ds.Generation > ds.Status.ObservedGeneration {
 			progressing = append(progressing, fmt.Sprintf("DaemonSet %q update is being processed (generation %d, observed generation %d)", dsName.String(), ds.Generation, ds.Status.ObservedGeneration))
 			dsProgressing = true
@@ -131,6 +135,11 @@ func (status *StatusManager) SetFromPods() {
 			depProgressing = true
 		} else if dep.Status.ObservedGeneration < dep.Generation {
 			progressing = append(progressing, fmt.Sprintf("Deployment %q update is being processed (generation %d, observed generation %d)", depName.String(), dep.Generation, dep.Status.ObservedGeneration))
+			depProgressing = true
+		} else if status.AdaptorName == "openshift" && dep.Spec.Replicas != nil &&
+			(dep.Status.UpdatedReplicas < *dep.Spec.Replicas || dep.Status.AvailableReplicas < *dep.Spec.Replicas) {
+			progressing = append(progressing, fmt.Sprintf("Deployment %q is waiting for updated and available replicas (%d updated, %d available, %d desired)",
+				depName.String(), dep.Status.UpdatedReplicas, dep.Status.AvailableReplicas, *dep.Spec.Replicas))
 			depProgressing = true
 		}
 
@@ -229,6 +238,12 @@ func (adaptor *StatusOc) setLastPodState(status *StatusManager, dss map[types.Na
 		ds.NamespacedName = nsn
 		ps.DeploymentStates = append(ps.DeploymentStates, ds)
 	}
+	sort.Slice(ps.DaemonsetStates, func(i, j int) bool {
+		return ps.DaemonsetStates[i].String() < ps.DaemonsetStates[j].String()
+	})
+	sort.Slice(ps.DeploymentStates, func(i, j int) bool {
+		return ps.DeploymentStates[i].String() < ps.DeploymentStates[j].String()
+	})
 
 	lsbytes, err := json.Marshal(ps)
 	if err != nil {

@@ -96,10 +96,10 @@ func (r *PodReconciler) recreateResourceIfNotExist(request *reconcile.Request) e
 	err := r.Client.Default().CRClient().Get(context.TODO(), request.NamespacedName, curObject)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			r.Log.Info(fmt.Sprintf("K8s resource - '%s' dose not exist", request.Name))
+			r.Log.Info("Antrea workload is missing", "name", request.Name)
 		} else {
 			r.Log.Error(err, fmt.Sprintf("Could not retrieve K8s resource - '%s'", request.Name))
-			r.Status.SetDegraded(statusmanager.OperatorConfig, "ApplyObjectsError", fmt.Sprintf("Failed to apply objects: %v", err))
+			r.Status.SetDegraded(statusmanager.PodDeployment, "ApplyObjectsError", fmt.Sprintf("Failed to apply objects: %v", err))
 			return err
 		}
 	} else {
@@ -111,7 +111,7 @@ func (r *PodReconciler) recreateResourceIfNotExist(request *reconcile.Request) e
 			err, fmt.Sprintf("could not apply (%s) %s/%s",
 				objectSpec.GroupVersionKind(), objectSpec.GetNamespace(), objectSpec.GetName()))
 		r.Status.SetDegraded(
-			statusmanager.OperatorConfig, "ApplyOperatorConfig",
+			statusmanager.PodDeployment, "ApplyOperatorConfig",
 			fmt.Sprintf("Failed to apply operator configuration: %v", err))
 		return err
 	}

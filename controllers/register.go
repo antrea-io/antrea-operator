@@ -43,6 +43,9 @@ type CoreOptions struct {
 	// operands. Leave it empty to use kube-system. A namespace migration
 	// requires a separate ownership handover.
 	OpenShiftNamespace string
+	// DisableOpenShiftWireGuard blocks WireGuard configuration when the
+	// distribution's OpenShift qualification excludes it.
+	DisableOpenShiftWireGuard bool
 }
 
 func (opts CoreOptions) validate() error {
@@ -105,6 +108,7 @@ func RegisterCore(ctx context.Context, mgr ctrl.Manager, opts CoreOptions) error
 	controller.version = opts.Version
 	if oc, ok := controller.Adaptor.(*AdaptorOc); ok {
 		oc.Config.CoreNamespace = opts.OpenShiftNamespace
+		oc.Config.DisableWireGuard = opts.DisableOpenShiftWireGuard
 	}
 	if opts.Bundle != nil {
 		controller.manifestDir = opts.Bundle.ManifestDir
@@ -115,6 +119,10 @@ func RegisterCore(ctx context.Context, mgr ctrl.Manager, opts CoreOptions) error
 		}
 		status.CoreResources = owned
 		controller.subcontroller = "antrea-core"
+	} else if info.AntreaPlatform == "openshift" {
+		status.RecoverableResources = []configv1.ObjectReference{{
+			Resource: "secrets", Namespace: controller.coreNamespace(), Name: types.ManagedIPsecPSKSecret,
+		}}
 	}
 	if info.AntreaPlatform == "openshift" {
 		status.FlowResources = make(map[configv1.ObjectReference]bool)
@@ -125,6 +133,9 @@ func RegisterCore(ctx context.Context, mgr ctrl.Manager, opts CoreOptions) error
 		for _, ref := range refs {
 			if status.CoreResources == nil || status.CoreResources[ref] {
 				status.FlowResources[ref] = true
+				if status.CoreResources == nil {
+					status.RecoverableResources = append(status.RecoverableResources, ref)
+				}
 			}
 		}
 	}

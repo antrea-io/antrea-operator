@@ -108,3 +108,36 @@ func TestSharedInstallStatusConflict(t *testing.T) {
 		t.Fatal("status update changed commercial fields")
 	}
 }
+
+func TestObservedConditionRejectsSupersededInstall(t *testing.T) {
+	ctx := context.Background()
+	raw := install.Object(schema.GroupVersionKind{})
+	raw.SetName("antrea-install")
+	raw.SetNamespace("antrea-operator")
+	raw.SetUID("current")
+	raw.SetGeneration(3)
+	store := fake.NewClientBuilder().WithObjects(raw).WithStatusSubresource(raw).Build()
+	report := configv1.ClusterOperatorStatusCondition{Type: "FlowAggregatorAvailable", Status: configv1.ConditionTrue}
+	for _, key := range []string{"generation", "uid"} {
+		old := raw.DeepCopy()
+		if key == "generation" {
+			old.SetGeneration(2)
+		} else {
+			old.SetUID("retired")
+		}
+		if err := install.ReportObservedOperandCondition(ctx, store, old, report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := install.Read(ctx, store, raw.GroupVersionKind())
+	if err != nil || after.Object["status"] != nil {
+		t.Fatalf("stale report updated install: %v %v", after, err)
+	}
+	if err := install.ReportObservedOperandCondition(ctx, store, raw, report); err != nil {
+		t.Fatal(err)
+	}
+	after, err = install.Read(ctx, store, raw.GroupVersionKind())
+	if err != nil || after.Object["status"] == nil {
+		t.Fatal("current condition missing", err)
+	}
+}

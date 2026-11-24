@@ -4,6 +4,14 @@ metadata:
   name: antrea-operator
 rules:
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - update
+- apiGroups:
   - ''
   resources:
   - configmaps

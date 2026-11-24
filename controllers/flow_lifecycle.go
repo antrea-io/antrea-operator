@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
 	operatorv1 "antrea.io/antrea-operator/api/v1"
@@ -55,6 +56,15 @@ func validateFlowAgent(agent *unstructured.Unstructured, objs []*unstructured.Un
 }
 
 const flowAvailable = "FlowAggregatorAvailable"
+
+// Observe availability changes between periodic reconciliations, including
+// replacement of a failed Pod by the Deployment controller.
+func (r *AntreaInstallReconciler) flowDeploymentRequest(_ context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetNamespace() != r.coreNamespace() || obj.GetName() != flow.Name || obj.GetLabels()[flow.ComponentLabel] != flow.Name || obj.GetLabels()[statusmanager.OperandLabel] != statusmanager.CoreOperand {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: types.OperatorNameSpace, Name: types.OperatorConfigName}}}
+}
 
 func flowEnabled(spec *operatorv1.FlowAggregatorSpec) bool { return spec != nil && spec.Enabled }
 
@@ -195,7 +205,7 @@ func flowCondition(ctx context.Context, c client.Reader, ns string, enabled bool
 
 func (r *AntreaInstallReconciler) reportFlow(ctx context.Context, spec *operatorv1.AntreaInstall, raw *unstructured.Unstructured) (time.Duration, error) {
 	if spec.Spec.FlowAggregator == nil && !hadFlowCondition(raw) {
-		return 0, nil
+		return ResyncPeriod, nil
 	}
 	c := r.Client.Default().CRClient()
 	enabled := flowEnabled(spec.Spec.FlowAggregator)
@@ -213,14 +223,11 @@ func (r *AntreaInstallReconciler) reportFlow(ctx context.Context, spec *operator
 			condition.Message = fmt.Sprintf("Install generation %d: waiting for retired Flow Aggregator resources to terminate", spec.Generation)
 		}
 	}
-	if err := install.ReportOperandCondition(ctx, c, r.installGVK, condition); err != nil {
+	if err := install.ReportObservedOperandCondition(ctx, c, raw, condition); err != nil {
 		return 0, err
 	}
 	if condition.Reason == "Progressing" {
 		return 5 * time.Second, nil
 	}
-	if enabled {
-		return ResyncPeriod, nil
-	}
-	return 0, nil
+	return ResyncPeriod, nil
 }

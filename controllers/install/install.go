@@ -14,12 +14,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1 "antrea.io/antrea-operator/api/v1"
-	"antrea.io/antrea-operator/controllers/types"
+	operatortypes "antrea.io/antrea-operator/controllers/types"
 )
 
 // Object returns the watch / read type for the distribution's install API.
@@ -35,7 +36,7 @@ func Object(gvk schema.GroupVersionKind) *unstructured.Unstructured {
 
 func Read(ctx context.Context, reader client.Reader, gvk schema.GroupVersionKind) (*unstructured.Unstructured, error) {
 	obj := Object(gvk)
-	key := client.ObjectKey{Namespace: types.OperatorNameSpace, Name: types.OperatorConfigName}
+	key := client.ObjectKey{Namespace: operatortypes.OperatorNameSpace, Name: operatortypes.OperatorConfigName}
 	if err := reader.Get(ctx, key, obj); err != nil {
 		return nil, err
 	}
@@ -73,6 +74,16 @@ func coreCondition(t configv1.ClusterStatusConditionType) bool {
 // ReportOperandCondition publishes a distribution-owned condition, such as
 // InterworkingAvailable. The four OpenShift core condition types are reserved.
 func ReportOperandCondition(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, condition configv1.ClusterOperatorStatusCondition) error {
+	return reportOperandCondition(ctx, c, gvk, nil, condition)
+}
+
+// ReportObservedOperandCondition merges a condition only while the observed
+// install UID and generation are current, including on optimistic-lock retry.
+func ReportObservedOperandCondition(ctx context.Context, c client.Client, observed *unstructured.Unstructured, condition configv1.ClusterOperatorStatusCondition) error {
+	return reportOperandCondition(ctx, c, observed.GroupVersionKind(), observed, condition)
+}
+
+func reportOperandCondition(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, observed *unstructured.Unstructured, condition configv1.ClusterOperatorStatusCondition) error {
 	if condition.Type == "" || coreCondition(condition.Type) {
 		return fmt.Errorf("expected an operand-specific condition type, got %q", condition.Type)
 	}
@@ -81,7 +92,7 @@ func ReportOperandCondition(ctx context.Context, c client.Client, gvk schema.Gro
 	default:
 		return fmt.Errorf("invalid status %q for %s", condition.Status, condition.Type)
 	}
-	return mergeConditions(ctx, c, gvk, []configv1.ClusterOperatorStatusCondition{condition})
+	return mergeConditions(ctx, c, gvk, []configv1.ClusterOperatorStatusCondition{condition}, observed)
 }
 
 // ReportCoreConditions publishes only the four standard conditions. A
@@ -96,14 +107,43 @@ func ReportCoreConditions(ctx context.Context, c client.Client, gvk schema.Group
 	if len(core) == 0 {
 		return nil
 	}
-	return mergeConditions(ctx, c, gvk, core)
+	return mergeConditions(ctx, c, gvk, core, nil)
 }
 
-func mergeConditions(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, updates []configv1.ClusterOperatorStatusCondition) error {
+// ReportCoreAppliedGeneration records a successful OpenShift apply against
+// the same install instance and generation. It merges with operand status.
+func ReportCoreAppliedGeneration(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, uid types.UID, generation int64) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		obj, err := Read(ctx, c, gvk)
 		if err != nil {
 			return err
+		}
+		if obj.GetUID() != uid || obj.GetGeneration() != generation {
+			return nil
+		}
+		last, found, err := unstructured.NestedInt64(obj.Object, "status", "coreAppliedGeneration")
+		if err != nil {
+			return err
+		}
+		if found && last == generation {
+			return nil
+		}
+		before := obj.DeepCopy()
+		if err := unstructured.SetNestedField(obj.Object, generation, "status", "coreAppliedGeneration"); err != nil {
+			return err
+		}
+		return c.Status().Patch(ctx, obj, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	})
+}
+
+func mergeConditions(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, updates []configv1.ClusterOperatorStatusCondition, observed *unstructured.Unstructured) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := Read(ctx, c, gvk)
+		if err != nil {
+			return err
+		}
+		if observed != nil && (obj.GetUID() != observed.GetUID() || obj.GetGeneration() != observed.GetGeneration()) {
+			return nil
 		}
 		before := obj.DeepCopy()
 		conditions, _, err := unstructured.NestedSlice(obj.Object, "status", "conditions")

@@ -71,6 +71,9 @@ type StatusManager struct {
 	CoreResources map[configv1.ObjectReference]bool
 	// FlowResources also records inactive optional identities for standalone cleanup.
 	FlowResources map[configv1.ObjectReference]bool
+	// RecoverableResources are known standalone core identities that may
+	// remain after an interrupted apply precedes inventory publication.
+	RecoverableResources []configv1.ObjectReference
 
 	OperatorNamespace string
 	AdaptorName       string
@@ -146,15 +149,21 @@ func (status *StatusManager) syncRelatedObjects(ctx context.Context, desired []c
 		for _, ref := range co.Status.RelatedObjects {
 			tracked[ref] = true
 		}
-		inactive := status.CoreResources
-		if inactive == nil {
-			inactive = status.FlowResources
+		recover := func(ref configv1.ObjectReference) error {
+			if seen[ref] || tracked[ref] {
+				return nil
+			}
+			_, err := status.prune(ctx, ref)
+			return err
 		}
-		for ref := range inactive {
-			if !seen[ref] && !tracked[ref] {
-				if _, err := status.prune(ctx, ref); err != nil {
-					return err
-				}
+		for ref := range status.CoreResources {
+			if err := recover(ref); err != nil {
+				return err
+			}
+		}
+		for _, ref := range status.RecoverableResources {
+			if err := recover(ref); err != nil {
+				return err
 			}
 		}
 		if reflect.DeepEqual(co.Status.RelatedObjects, next) {
@@ -272,6 +281,13 @@ func (status *StatusManager) setConditions(progressing []string, reachedAvailabl
 				Status: configv1.ConditionTrue,
 			},
 		)
+	} else if status.AdaptorName == "openshift" {
+		conditions = append(conditions, configv1.ClusterOperatorStatusCondition{
+			Type:    configv1.OperatorAvailable,
+			Status:  configv1.ConditionFalse,
+			Reason:  "OperandsNotReady",
+			Message: "Antrea core workloads are waiting for readiness",
+		})
 	}
 	status.set(status, reachedAvailableLevel, conditions...)
 }
@@ -293,7 +309,9 @@ func (status *StatusManager) setClusterOperatorConditions(co *configv1.ClusterOp
 	status.CombineConditions(&co.Status.Conditions, conditions)
 	progressingCondition := v1helpers.FindStatusCondition(co.Status.Conditions, configv1.OperatorProgressing)
 	availableCondition := v1helpers.FindStatusCondition(co.Status.Conditions, configv1.OperatorAvailable)
-	if availableCondition == nil && progressingCondition != nil && progressingCondition.Status == configv1.ConditionTrue {
+	degradedCondition := v1helpers.FindStatusCondition(co.Status.Conditions, configv1.OperatorDegraded)
+	if availableCondition == nil && ((progressingCondition != nil && progressingCondition.Status == configv1.ConditionTrue) ||
+		(status.AdaptorName == "openshift" && degradedCondition != nil && degradedCondition.Status == configv1.ConditionTrue)) {
 		v1helpers.SetStatusCondition(&co.Status.Conditions,
 			configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorAvailable,

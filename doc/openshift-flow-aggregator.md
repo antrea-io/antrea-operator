@@ -83,7 +83,8 @@ revision contract. A change limited to aggregator configuration rolls the
 aggregator. Changes to the agent gate may also activate existing independent
 dynamic destinations. `AntreaInstall.status.conditions` includes
 `FlowAggregatorAvailable`, with the reconciled install generation in the
-message. `False/Progressing` observes rollout or termination,
+message. Compare `status.coreAppliedGeneration` with the install generation.
+`False/Progressing` observes rollout or termination,
 `True/Available` requires the agent DaemonSet and one updated available
 aggregator, and `False/Disabled` follows managed cleanup and agent
 convergence. Invalid configuration, resource collisions and failed writes

@@ -42,11 +42,17 @@ func main() {
 	var printVersion bool
 	var metricsAddr string
 	var enableLeaderElection bool
+	var disableOpenShiftWireGuard bool
+	var openShiftCoreNamespace string
 	flag.BoolVar(&printVersion, "version", false, "Show version and exit")
 	flag.StringVar(&metricsAddr, "metrics-addr", "0", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.BoolVar(&disableOpenShiftWireGuard, "disable-openshift-wireguard", false,
+		"Block OpenShift WireGuard requests for a distribution that excludes WireGuard.")
+	flag.StringVar(&openShiftCoreNamespace, "openshift-core-namespace", "",
+		"Select a provisioned OpenShift core namespace. The default is kube-system.")
 	flag.Parse()
 
 	if printVersion {
@@ -67,7 +73,10 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-	if err := controllers.RegisterCore(context.Background(), mgr, controllers.CoreOptions{}); err != nil {
+	if err := controllers.RegisterCore(context.Background(), mgr, controllers.CoreOptions{
+		OpenShiftNamespace:        openShiftCoreNamespace,
+		DisableOpenShiftWireGuard: disableOpenShiftWireGuard,
+	}); err != nil {
 		setupLog.Error(err, "unable to register core controllers")
 		os.Exit(1)
 	}
