@@ -66,6 +66,14 @@ fi
 ### Get Antrea repository
 ANTREA_DIR=$(mktemp -d /tmp/antrea.XXXXXXX)
 
+# Use an isolated environment if the caller does not have PyYAML.
+PYTHON=python3
+if ! "$PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    python3 -m venv "$ANTREA_DIR/venv"
+    PYTHON="$ANTREA_DIR/venv/bin/python"
+    "$PYTHON" -m pip install -q PyYAML==6.0.3
+fi
+
 if [ "$ANTREA_VERSION" == "main" ]; then
     ANTREA_URL="https://github.com/antrea-io/antrea/archive/refs/heads/main.tar.gz"
     ANTREA_ROOT=$ANTREA_DIR/antrea-main
@@ -118,19 +126,16 @@ $KUSTOMIZE build | sed 's/\\"\({{.*}}\)\\"/"\1"/; '"s/'\({{.*}}\)'/\1/" > $THIS_
 popd > /dev/null
 
 ### Generate config/rbac/role.yaml
-# generate-role-yaml.py requires PyYAML, install it just in case that it's missing
-pip3 -q install PyYAML
-
 ROLE_FILES="$THIS_DIR/../config/rbac/role_base.yaml $ANTREA_ROOT/build/yamls/antrea.yml"
 
 if [ "$ANTREA_PLATFORM" == "openshift" ]; then
     ROLE_FILES+=" $THIS_DIR/../config/rbac/role_base_ocp.yaml"
 fi
 
-$THIS_DIR/generate-role-yaml.py $ROLE_FILES  > $THIS_DIR/../config/rbac/role.yaml
+"$PYTHON" "$THIS_DIR/generate-role-yaml.py" $ROLE_FILES  > $THIS_DIR/../config/rbac/role.yaml
 
 ### Generate config/samples/operator_v1_antreainstall.yaml
-$THIS_DIR/generate-antrea-samples.py --platform $ANTREA_PLATFORM --version $ANTREA_VERSION \
+"$PYTHON" "$THIS_DIR/generate-antrea-samples.py" --platform $ANTREA_PLATFORM --version $ANTREA_VERSION \
     $ANTREA_ROOT/build/yamls/antrea.yml > $THIS_DIR/../config/samples/operator_v1_antreainstall.yaml
 
 rm -rf $TMP_DIR $ANTREA_DIR
