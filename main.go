@@ -17,6 +17,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	operatorv1 "antrea.io/antrea-operator/api/v1"
 	"antrea.io/antrea-operator/controllers"
@@ -61,11 +62,10 @@ func main() {
 
 	cfg := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: metricsAddr,
-		Port:               9443,
-		LeaderElection:     enableLeaderElection,
-		LeaderElectionID:   "antrea-operator.antrea.vmware.com",
+		Scheme:           scheme,
+		Metrics:          metricsserver.Options{BindAddress: metricsAddr},
+		LeaderElection:   enableLeaderElection,
+		LeaderElectionID: "antrea-operator.antrea.vmware.com",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

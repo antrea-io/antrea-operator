@@ -24,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -64,7 +63,7 @@ func (k8s *AdaptorK8s) SetupWithManager(r *AntreaInstallReconciler, mgr ctrl.Man
 func (oc *AdaptorOc) SetupWithManager(r *AntreaInstallReconciler, mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&operatorv1.AntreaInstall{}).
-		Watches(&source.Kind{Type: &configv1.Network{}}, &handler.EnqueueRequestForObject{}).
+		Watches(&configv1.Network{}, &handler.EnqueueRequestForObject{}).
 		Complete(r)
 }
 

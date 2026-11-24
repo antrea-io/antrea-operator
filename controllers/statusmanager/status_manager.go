@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -190,14 +191,14 @@ func (status *StatusManager) setClusterOperatorConditions(co *configv1.ClusterOp
 				Status:  configv1.ConditionFalse,
 				Reason:  "Startup",
 				Message: "The network is starting up",
-			},
+			}, clock.RealClock{},
 		)
 	}
 	v1helpers.SetStatusCondition(&co.Status.Conditions,
 		configv1.ClusterOperatorStatusCondition{
 			Type:   configv1.OperatorUpgradeable,
 			Status: configv1.ConditionTrue,
-		},
+		}, clock.RealClock{},
 	)
 }
 
@@ -292,13 +293,13 @@ func (status *StatusManager) CombineConditions(conditions *[]configv1.ClusterOpe
 	for _, newCondition := range *newConditions {
 		existingCondition := v1helpers.FindStatusCondition(*conditions, newCondition.Type)
 		if existingCondition == nil {
-			v1helpers.SetStatusCondition(conditions, newCondition)
+			v1helpers.SetStatusCondition(conditions, newCondition, clock.RealClock{})
 			messages += fmt.Sprintf("%v. ", newCondition)
 			changed = true
 		} else if existingCondition.Status != newCondition.Status ||
 			existingCondition.Reason != newCondition.Reason ||
 			existingCondition.Message != newCondition.Message {
-			v1helpers.SetStatusCondition(conditions, newCondition)
+			v1helpers.SetStatusCondition(conditions, newCondition, clock.RealClock{})
 			messages += fmt.Sprintf("%v. ", newCondition)
 			changed = true
 		}
