@@ -80,7 +80,7 @@ func TestOpenShiftIPsecBundle(t *testing.T) {
 		t.Fatalf("unexpected IPsec sidecar: %v", ipsec)
 	}
 	pskEnv := agentContainers[0].Env[len(agentContainers[0].Env)-1]
-	if pskEnv.Name != "ANTREA_IPSEC_PSK" || pskEnv.ValueFrom.SecretKeyRef.Name != types.ManagedIPsecPSKSecret || pskEnv.ValueFrom.SecretKeyRef.Key != types.IPsecPSKKey {
+	if pskEnv.Name != "ANTREA_IPSEC_PSK" || pskEnv.ValueFrom.SecretKeyRef.Name != types.ManagedIPsecPSKName || pskEnv.ValueFrom.SecretKeyRef.Key != types.IPsecPSKKey {
 		t.Fatalf("unexpected PSK reference: %v", pskEnv)
 	}
 	if image := controller.Spec.Template.Spec.Containers[0].Image; image != install.Spec.AntreaControllerImage {

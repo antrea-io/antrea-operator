@@ -24,15 +24,20 @@ through the status subresource.
 | `CoreOptions.InstallGVK` | A zero value selects the standalone GVK. A distribution can select another group/version serving the same namespaced kind and shared field formats. |
 | `CoreOptions.Version` | Release value supplied to templates and reported in the OpenShift ClusterOperator's operator version. The default comes from the upstream build. |
 | `CoreOptions.OpenShiftNamespace` | The selected core namespace on OpenShift. Empty selects `kube-system`. Provision the namespace before starting the operator. Optional `spec.coreNamespace` must match that selection. Use `{{.AntreaNamespace}}` in templates and the selected value in `OwnedResources`. |
+| `CoreOptions.DisableOpenShiftWireGuard` | Disable the OpenShift WireGuard configuration path if qualification excludes it. Core rejects the explicit request before changing operands. |
 | `CoreOptions.Bundle` | A nil bundle selects the shipped templates. A custom `*controllers.ResourceBundle` provides a manifest directory and its core resource identities. |
 | `ResourceBundle.ManifestDir` | CNO renders the generated directory. Include core manifests, the required agent and controller, and distribution-specific core CRDs/RBAC here. Keep the install CRD in the distribution's install archive. |
 | `ResourceBundle.OwnedResources` | Exact OpenShift `configv1.ObjectReference` values with API group, plural resource, namespace and name. Include every active identity and retired identities still eligible for cleanup. Registration copies the list. Generate it from the core resource contract independently of optional enablement flags. |
 | `ResourceBundle.Configure` | Optional `func(*unstructured.Unstructured, map[string]interface{}) error`. Read the full install and supply distribution template values after core defaults and validation. Return errors suitable for installation status. This callback may run more than once for the same input. |
 
-For example, the commercial generator can render distinct agent and controller
-image keys. Its callback reads `spec.antreaAgentImage` and
-`spec.antreaControllerImage` and selects its image defaults. A generation
-change rerenders a custom bundle even when the projected core spec is
+The OpenShift path provides distinct `AntreaAgentImage` and
+`AntreaControllerImage` template values from the common install fields.
+The commercial callback can supply distribution defaults. An OpenShift
+bundle includes the `antrea-config` ConfigMap and delegates the IPsec
+sidecar and its managed legacy PSK Secret to core.
+[OpenShift bootstrap and IPsec contract](openshift-core.md)
+
+A generation change rerenders a custom bundle even when the projected core spec is
 identical. Core adds a revision derived from rendered core ConfigMap names,
 data and binary data to both core Pod templates. A change in a distribution
 ConfigMap rolls the workloads. Other inputs that require a restart, such as a

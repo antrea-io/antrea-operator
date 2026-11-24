@@ -36,8 +36,8 @@ const (
 	CNIConfDirRenderKey = "CNIConfDir"
 	CNIBinDirRenderKey  = "CNIBinDir"
 
-	IPsecPSKKey           = "psk"
-	LegacyIPsecPSKSecret  = "antrea-ipsec"
-	ManagedIPsecPSKSecret = "antrea-ipsec-operator-psk"
-	IPsecCAName           = "antrea-ipsec-ca"
+	IPsecPSKKey         = "psk"
+	DefaultIPsecPSKName = "antrea-ipsec"
+	ManagedIPsecPSKName = "antrea-ipsec-operator-psk"
+	IPsecCAName         = "antrea-ipsec-ca"
 )

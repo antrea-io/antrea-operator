@@ -216,12 +216,12 @@ func ipsecProfile(agent map[string]interface{}, operConfig *operatorv1.AntreaIns
 			if !ValidIPsecPSK(psk) {
 				return profile, fmt.Errorf("spec.psk must contain a nonblank key without control characters")
 			}
-			profile.PSKSecretName = types.ManagedIPsecPSKSecret
+			profile.PSKSecretName = types.ManagedIPsecPSKName
 		} else {
 			if secret == "" {
-				secret = types.LegacyIPsecPSKSecret
+				secret = types.DefaultIPsecPSKName
 			}
-			if errs := validation.IsDNS1123Subdomain(secret); len(errs) > 0 || secret == types.ManagedIPsecPSKSecret || secret == types.IPsecCAName {
+			if errs := validation.IsDNS1123Subdomain(secret); len(errs) > 0 || secret == types.ManagedIPsecPSKName || secret == types.IPsecCAName {
 				return profile, fmt.Errorf("spec.ipsecPSKSecretName must be a valid, nonreserved Secret name")
 			}
 			profile.PSKSecretName = secret

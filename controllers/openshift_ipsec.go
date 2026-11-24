@@ -73,14 +73,14 @@ func (r *AntreaInstallReconciler) prepareOpenShiftOperands(objects []*unstructur
 	}
 	for _, obj := range objects {
 		if obj.GroupVersionKind() == corev1.SchemeGroupVersion.WithKind("Secret") && obj.GetNamespace() == namespace &&
-			(obj.GetName() == expected.PSKSecretName || obj.GetName() == types.ManagedIPsecPSKSecret) {
+			(obj.GetName() == expected.PSKSecretName || obj.GetName() == types.ManagedIPsecPSKName) {
 			return operands, fmt.Errorf("OpenShift bundle cannot render IPsec credential Secret %s/%s", namespace, obj.GetName())
 		}
 	}
 	if err := configureIPsecAgent(operands.agent, expected); err != nil {
 		return operands, err
 	}
-	if expected.PSKSecretName == types.ManagedIPsecPSKSecret {
+	if expected.PSKSecretName == types.ManagedIPsecPSKName {
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: expected.PSKSecretName, Namespace: namespace},
 			Type:       corev1.SecretTypeOpaque,

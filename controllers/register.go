@@ -121,7 +121,7 @@ func RegisterCore(ctx context.Context, mgr ctrl.Manager, opts CoreOptions) error
 		controller.subcontroller = "antrea-core"
 	} else if info.AntreaPlatform == "openshift" {
 		status.RecoverableResources = []configv1.ObjectReference{{
-			Resource: "secrets", Namespace: controller.coreNamespace(), Name: types.ManagedIPsecPSKSecret,
+			Resource: "secrets", Namespace: controller.coreNamespace(), Name: types.ManagedIPsecPSKName,
 		}}
 	}
 	if info.AntreaPlatform == "openshift" {
