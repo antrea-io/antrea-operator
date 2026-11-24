@@ -40,6 +40,26 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resourceNames:
+  - flow-aggregator-ca-tls
+  - flow-aggregator-client-tls
+  resources:
+  - secrets
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - admissionregistration.k8s.io
   resources:
   - mutatingwebhookconfigurations
@@ -154,6 +174,24 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - crd.antrea.io
+  resources:
+  - flowexporterdestinations
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - crd.antrea.io
+  resourceNames:
+  - operator-flow-aggregator
+  resources:
+  - flowexporterdestinations
+  verbs:
+  - delete
+  - patch
 - apiGroups:
   - crd.antrea.io
   resources:

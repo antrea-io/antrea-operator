@@ -11,6 +11,9 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
+
+	"antrea.io/antrea-operator/controllers/flow"
 
 	configv1 "github.com/openshift/api/config/v1"
 	ocoperv1 "github.com/openshift/api/operator/v1"
@@ -110,6 +113,17 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 		return reconcile.Result{}, err
 	}
 
+	var flowObjs []*uns.Unstructured
+	if clusterConfig != nil {
+		flowObjs, err = flow.Render(operConfig.Spec.FlowAggregator, r.coreNamespace(), renderData.Data)
+	} else if flowEnabled(operConfig.Spec.FlowAggregator) {
+		err = fmt.Errorf("managed Flow Aggregator requires OpenShift")
+	}
+	if err != nil {
+		r.Status.SetDegraded(statusmanager.OperatorConfig, "InvalidFlowConfiguration", err.Error())
+		return reconcile.Result{}, err
+	}
+
 	appliedConfig := r.AppliedOperConfig
 	if r.Status.CoreResources == nil && appliedConfig == nil {
 		appliedConfig, err = r.getAppliedOperConfig()
@@ -121,7 +135,7 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 	agentNeedChange, controllerNeedChange, imageChange := configutil.NeedApplyChange(appliedConfig, operConfig)
 	// A distribution's render may depend on fields outside the projection.
 	// Standalone keeps its existing comparison against the installed config.
-	if agentNeedChange || controllerNeedChange || r.Status.CoreResources != nil {
+	if clusterConfig != nil || agentNeedChange || controllerNeedChange || r.Status.CoreResources != nil {
 		objs, err := render.RenderDir(r.manifestDir, renderData)
 		if err != nil {
 			log.Error(err, "failed to render configuration")
@@ -129,16 +143,33 @@ func applyConfig(r *AntreaInstallReconciler, config configutil.Config, clusterCo
 			return reconcile.Result{Requeue: true}, err
 		}
 
+		if clusterConfig != nil && r.Status.CoreResources == nil {
+			objs, err = flow.EnsureDestinationCRD(objs)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+		}
+		objs = append(objs, flowObjs...)
 		inventory, err := r.prepareInventory(objs, clusterConfig)
 		if err != nil {
 			r.Status.SetDegraded(statusmanager.OperatorConfig, "InvalidResourceBundle", err.Error())
 			return reconcile.Result{}, err
 		}
 
+		if len(flowObjs) != 0 {
+			if err := validateFlowAgent(inventory.agent, objs); err != nil {
+				r.Status.SetDegraded(statusmanager.OperatorConfig, "InvalidFlowConfiguration", err.Error())
+				return reconcile.Result{}, err
+			}
+		}
 		r.SharedInfo.Lock()
 		defer r.SharedInfo.Unlock()
+		if err := r.checkFlowOwnership(context.TODO(), flowObjs); err != nil {
+			r.Status.SetDegraded(statusmanager.OperatorConfig, "FlowOwnershipConflict", err.Error())
+			return reconcile.Result{}, err
+		}
 		for _, obj := range objs {
-			if err = apply.ApplyObject(context.TODO(), r.Client, obj, r.subcontroller); err != nil {
+			if err = r.applyOperand(context.TODO(), obj); err != nil {
 				r.Status.SetDegraded(statusmanager.OperatorConfig, "ApplyObjectsError", fmt.Sprintf("Failed to apply operator configurations: %v", err))
 				return reconcile.Result{}, err
 			}
@@ -181,7 +212,9 @@ func fetchAntreaInstall(r *AntreaInstallReconciler, request ctrl.Request) (*oper
 	// reuse a generation but has a different UID.
 	applied := r.AppliedOperConfig
 	if request.Name == raw.GetName() && applied != nil && raw.GetGeneration() == applied.Generation && raw.GetUID() == applied.UID {
-		return nil, nil, nil
+		if !flowEnabled(applied.Spec.FlowAggregator) || time.Since(r.lastFlowApply) < ResyncPeriod {
+			return nil, raw, nil
+		}
 	}
 	core, err := install.CoreConfig(raw)
 	if err != nil {
@@ -275,6 +308,10 @@ func (oc *AdaptorOc) Reconcile(r *AntreaInstallReconciler, request ctrl.Request)
 		return reconcile.Result{Requeue: true}, err
 	}
 	if operConfig == nil {
+		if raw != nil && r.AppliedOperConfig != nil {
+			delay, err := r.reportFlow(context.TODO(), r.AppliedOperConfig, raw)
+			return reconcile.Result{RequeueAfter: delay}, err
+		}
 		return reconcile.Result{}, nil
 	}
 
@@ -300,10 +337,11 @@ func (oc *AdaptorOc) Reconcile(r *AntreaInstallReconciler, request ctrl.Request)
 	r.Status.SetNotDegraded(statusmanager.ClusterConfig)
 	r.Status.SetNotDegraded(statusmanager.OperatorConfig)
 
+	r.lastFlowApply = time.Now()
 	r.AppliedClusterConfig = clusterConfig
 	r.AppliedOperConfig = operConfig
-
-	return reconcile.Result{}, nil
+	delay, err := r.reportFlow(context.TODO(), operConfig, raw)
+	return reconcile.Result{RequeueAfter: delay}, err
 }
 
 // AntreaInstallReconciler reconciles a AntreaInstall object
@@ -320,6 +358,7 @@ type AntreaInstallReconciler struct {
 	version       string
 	configure     func(*uns.Unstructured, map[string]interface{}) error
 	subcontroller string
+	lastFlowApply time.Time
 
 	SharedInfo           *sharedinfo.SharedInfo
 	AppliedClusterConfig *configv1.Network
@@ -371,6 +410,11 @@ func (r *AntreaInstallReconciler) coreNamespace() string {
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=networks,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;watch;list
 // +kubebuilder:rbac:groups="",resources=namespaces;pods;configmaps;services;serviceaccounts,verbs=create;delete;get;list;patch;update;watch;deletecollection
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
+// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=flow-aggregator-ca-tls;flow-aggregator-client-tls,verbs=get;list;watch;update;patch;delete
+// +kubebuilder:rbac:groups=crd.antrea.io,resources=flowexporterdestinations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=crd.antrea.io,resources=flowexporterdestinations,verbs=create
+// +kubebuilder:rbac:groups=crd.antrea.io,resources=flowexporterdestinations,resourceNames=operator-flow-aggregator,verbs=patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments;daemonsets,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=create;delete;get;list;patch;update;watch
@@ -475,7 +519,12 @@ func (r *AntreaInstallReconciler) prepareInventory(objs []*uns.Unstructured, clu
 		gvk := obj.GroupVersionKind()
 		mapping, err := r.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 		if err != nil {
-			return nil, fmt.Errorf("mapping %s: %w", gvk, err)
+			// The CRD may be installed by this same bundle. The first
+			// destination apply retries after discovery observes it.
+			if gvk != flow.DestinationGVK || !meta.IsNoMatchError(err) || !flow.HasDestinationCRD(objs) {
+				return nil, fmt.Errorf("mapping %s: %w", gvk, err)
+			}
+			mapping = &meta.RESTMapping{Resource: gvk.GroupVersion().WithResource("flowexporterdestinations")}
 		}
 		ref := configv1.ObjectReference{Group: gvk.Group, Resource: mapping.Resource.Resource, Namespace: obj.GetNamespace(), Name: obj.GetName()}
 		if ref.Name == "" || seen[ref] {
@@ -513,7 +562,7 @@ func (r *AntreaInstallReconciler) prepareInventory(objs []*uns.Unstructured, clu
 			}
 		}
 		key := client.ObjectKeyFromObject(obj)
-		if r.Status.CoreResources != nil && gvk == corev1.SchemeGroupVersion.WithKind("ConfigMap") {
+		if r.Status.CoreResources != nil && obj.GetLabels()[flow.ComponentLabel] != flow.Name && gvk == corev1.SchemeGroupVersion.WithKind("ConfigMap") {
 			configMaps[key.String()] = []interface{}{obj.Object["data"], obj.Object["binaryData"]}
 		}
 		if gvk == appsv1.SchemeGroupVersion.WithKind("DaemonSet") {

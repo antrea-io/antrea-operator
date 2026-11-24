@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"antrea.io/antrea-operator/controllers/flow"
 	"antrea.io/antrea-operator/controllers/install"
 	"antrea.io/antrea-operator/controllers/sharedinfo"
 )
@@ -67,6 +68,8 @@ type StatusManager struct {
 	// CoreResources is the immutable set of core object identities declared by
 	// a distribution. A nil map selects the standalone manifest.
 	CoreResources map[configv1.ObjectReference]bool
+	// FlowResources also records inactive optional identities for standalone cleanup.
+	FlowResources map[configv1.ObjectReference]bool
 
 	OperatorNamespace string
 	AdaptorName       string
@@ -142,7 +145,11 @@ func (status *StatusManager) syncRelatedObjects(ctx context.Context, desired []c
 		for _, ref := range co.Status.RelatedObjects {
 			tracked[ref] = true
 		}
-		for ref := range status.CoreResources {
+		inactive := status.CoreResources
+		if inactive == nil {
+			inactive = status.FlowResources
+		}
+		for ref := range inactive {
 			if !seen[ref] && !tracked[ref] {
 				if _, err := status.prune(ctx, ref); err != nil {
 					return err
@@ -155,6 +162,33 @@ func (status *StatusManager) syncRelatedObjects(ctx context.Context, desired []c
 		co.Status.RelatedObjects = next
 		return status.client.Status().Update(ctx, co)
 	})
+}
+
+// FlowCleanupPending observes asynchronous deletes, including resources held
+// by finalizers. A same-name replacement outside flow ownership is preserved.
+func (status *StatusManager) FlowCleanupPending(ctx context.Context) (bool, error) {
+	for ref := range status.FlowResources {
+		gvk, err := status.mapper.KindFor(schema.GroupVersionResource{Group: ref.Group, Resource: ref.Resource})
+		if meta.IsNoMatchError(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		obj := new(uns.Unstructured)
+		obj.SetGroupVersionKind(gvk)
+		err = status.client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj)
+		if k8serrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if obj.GetLabels()[OperandLabel] == CoreOperand && obj.GetLabels()[flow.ComponentLabel] == flow.Name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (status *StatusManager) prune(ctx context.Context, ref configv1.ObjectReference) (bool, error) {
@@ -176,7 +210,7 @@ func (status *StatusManager) prune(ctx context.Context, ref configv1.ObjectRefer
 	if err != nil {
 		return false, err
 	}
-	if obj.GetLabels()[OperandLabel] != CoreOperand {
+	if obj.GetLabels()[OperandLabel] != CoreOperand || (status.FlowResources[ref] && obj.GetLabels()[flow.ComponentLabel] != flow.Name) {
 		return false, nil
 	}
 	// A replacement, relabel, or concurrent handover invalidates the delete.

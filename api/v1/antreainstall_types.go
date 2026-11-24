@@ -11,6 +11,21 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// FlowAggregatorSpec configures the operator-managed OpenShift flow pipeline.
+type FlowAggregatorSpec struct {
+	// Enabled deploys the aggregator and configures dynamic export from the agents.
+	Enabled bool `json:"enabled"`
+	// Mode defaults to Aggregate. Proxy forwards individual agent observations.
+	// +kubebuilder:validation:Enum=Aggregate;Proxy
+	Mode string `json:"mode,omitempty"`
+	// CollectorAddress is an external IPFIX-over-TCP receiver (IPv4 or DNS host:port).
+	CollectorAddress string `json:"collectorAddress,omitempty"`
+	// PodLabels includes endpoint Pod labels in exported records.
+	PodLabels bool `json:"podLabels,omitempty"`
+	// Image overrides the distribution's Flow Aggregator image.
+	Image string `json:"image,omitempty"`
+}
+
 // AntreaInstallSpec defines the desired state of AntreaInstall
 type AntreaInstallSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -40,6 +55,9 @@ type AntreaInstallSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// +optional
 	AntreaImage string `json:"antreaImage,omitempty"`
+
+	// FlowAggregator selects optional upstream flow management on OpenShift.
+	FlowAggregator *FlowAggregatorSpec `json:"flowAggregator,omitempty"`
 
 	// CoreNamespace, when specified, must match the namespace selected at
 	// operator startup for the OpenShift core workloads.

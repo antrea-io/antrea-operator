@@ -128,13 +128,13 @@ $KUSTOMIZE build | sed 's/\\"\({{.*}}\)\\"/"\1"/; '"s/'\({{.*}}\)'/\1/" \
 popd > /dev/null
 
 ### Generate config/rbac/role.yaml
-ROLE_FILES="$THIS_DIR/../config/rbac/role_base.yaml $ANTREA_ROOT/build/yamls/antrea.yml"
+ROLE_FILES=("$THIS_DIR/../config/rbac/role_base.yaml" "$ANTREA_ROOT/build/yamls/antrea.yml")
 
 if [ "$ANTREA_PLATFORM" == "openshift" ]; then
-    ROLE_FILES+=" $THIS_DIR/../config/rbac/role_base_ocp.yaml"
+    ROLE_FILES+=(--exact-role "$THIS_DIR/../config/rbac/role_base_ocp.yaml")
 fi
 
-"$PYTHON" "$THIS_DIR/generate-role-yaml.py" $ROLE_FILES  > $THIS_DIR/../config/rbac/role.yaml
+"$PYTHON" "$THIS_DIR/generate-role-yaml.py" "${ROLE_FILES[@]}" > $THIS_DIR/../config/rbac/role.yaml
 
 ### Generate config/samples/operator_v1_antreainstall.yaml
 "$PYTHON" "$THIS_DIR/generate-antrea-samples.py" --platform $ANTREA_PLATFORM --version $ANTREA_VERSION \

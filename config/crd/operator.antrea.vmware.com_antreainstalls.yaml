@@ -60,6 +60,36 @@ spec:
                   CoreNamespace, when specified, must match the namespace selected at
                   operator startup for the OpenShift core workloads.
                 type: string
+              flowAggregator:
+                description: FlowAggregator selects optional upstream flow management
+                  on OpenShift.
+                properties:
+                  collectorAddress:
+                    description: CollectorAddress is an external IPFIX-over-TCP receiver
+                      (IPv4 or DNS host:port).
+                    type: string
+                  enabled:
+                    description: Enabled deploys the aggregator and configures dynamic
+                      export from the agents.
+                    type: boolean
+                  image:
+                    description: Image overrides the distribution's Flow Aggregator
+                      image.
+                    type: string
+                  mode:
+                    description: Mode defaults to Aggregate. Proxy forwards individual
+                      agent observations.
+                    enum:
+                    - Aggregate
+                    - Proxy
+                    type: string
+                  podLabels:
+                    description: PodLabels includes endpoint Pod labels in exported
+                      records.
+                    type: boolean
+                required:
+                - enabled
+                type: object
             required:
             - antreaAgentConfig
             - antreaCNIConfig

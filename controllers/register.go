@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"antrea.io/antrea-operator/controllers/flow"
 	"antrea.io/antrea-operator/controllers/install"
 	"antrea.io/antrea-operator/controllers/sharedinfo"
 	"antrea.io/antrea-operator/controllers/statusmanager"
@@ -114,6 +115,18 @@ func RegisterCore(ctx context.Context, mgr ctrl.Manager, opts CoreOptions) error
 		}
 		status.CoreResources = owned
 		controller.subcontroller = "antrea-core"
+	}
+	if info.AntreaPlatform == "openshift" {
+		status.FlowResources = make(map[configv1.ObjectReference]bool)
+		refs, err := flow.OwnedResources(controller.coreNamespace())
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if status.CoreResources == nil || status.CoreResources[ref] {
+				status.FlowResources[ref] = true
+			}
+		}
 	}
 	if err := controller.SetupWithManager(mgr); err != nil {
 		return err

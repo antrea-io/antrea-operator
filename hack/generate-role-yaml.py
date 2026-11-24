@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 
-import sys
+import argparse
 import yaml
 
-if len(sys.argv) == 1:
-    print(" Usage: %s <input yaml file>..." % sys.argv[0])
-    exit(1)
+parser = argparse.ArgumentParser()
+parser.add_argument("manifests", nargs="+")
+parser.add_argument("--exact-role", action="append", default=[],
+                    help="Append the operator's own RBAC rules without expanding their scope")
+args = parser.parse_args()
 
 roles = {}
 nrurls = {}
-for f in sys.argv[1:]:
+for f in args.manifests:
     with open(f, "r") as  s:
         docs = yaml.load_all(s, Loader=yaml.Loader)
 
@@ -39,6 +41,13 @@ for apig in sorted(roles.keys()):
 
 for r, v in sorted(nrurls.items()):
     out['rules'].append({'nonResourceURLs': [r], 'verbs': v})
+for f in args.exact_role:
+    with open(f) as source:
+        role = yaml.safe_load(source)
+        if role.get("kind") != "ClusterRole":
+            raise ValueError("expected a ClusterRole in " + f)
+        out["rules"].extend(role["rules"])
+
 print(yaml.dump(out))
 
 exit(0)

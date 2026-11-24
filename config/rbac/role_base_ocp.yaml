@@ -59,3 +59,17 @@ rules:
     - securitycontextconstraints
   verbs:
     - use
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create]
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [flow-aggregator-ca-tls, flow-aggregator-client-tls]
+  verbs: [get, list, watch, update, patch, delete]
+- apiGroups: [crd.antrea.io]
+  resources: [flowexporterdestinations]
+  verbs: [create, get, list, watch]
+- apiGroups: [crd.antrea.io]
+  resources: [flowexporterdestinations]
+  resourceNames: [operator-flow-aggregator]
+  verbs: [patch, delete]

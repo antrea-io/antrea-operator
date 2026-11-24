@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: flow-aggregator-config, namespace: {{printf "%q" .AntreaNamespace}}}
+data:
+  flow-aggregator.conf: {{printf "%q" .Config}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: flow-aggregator-ca, namespace: {{printf "%q" .AntreaNamespace}}}
+---
+# The certificate provider populates these objects through Update and preserves
+# their metadata. It has no permission to create replacements without ownership.
+apiVersion: v1
+kind: Secret
+metadata: {name: flow-aggregator-ca-tls, namespace: {{printf "%q" .AntreaNamespace}}}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: flow-aggregator-client-tls, namespace: {{printf "%q" .AntreaNamespace}}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: flow-aggregator-certificates, namespace: {{printf "%q" .AntreaNamespace}}}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [flow-aggregator-ca]
+  verbs: [get, list, watch, update]
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [flow-aggregator-ca-tls, flow-aggregator-client-tls]
+  verbs: [get, list, watch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: flow-aggregator-certificates, namespace: {{printf "%q" .AntreaNamespace}}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: flow-aggregator-certificates}
+subjects: [{kind: ServiceAccount, name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: flow-aggregator-agent, namespace: {{printf "%q" .AntreaNamespace}}}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [flow-aggregator-ca]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [flow-aggregator-client-tls]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: flow-aggregator-agent, namespace: {{printf "%q" .AntreaNamespace}}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: flow-aggregator-agent}
+subjects: [{kind: ServiceAccount, name: antrea-agent, namespace: {{printf "%q" .AntreaNamespace}}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: flow-aggregator-agent}
+rules:
+- apiGroups: [crd.antrea.io]
+  resources: [flowexporterdestinations]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: flow-aggregator-agent}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: flow-aggregator-agent}
+subjects: [{kind: ServiceAccount, name: antrea-agent, namespace: {{printf "%q" .AntreaNamespace}}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: flow-aggregator}
+rules:
+- apiGroups: [""]
+  resources: [pods, nodes, services]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: flow-aggregator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: flow-aggregator}
+subjects: [{kind: ServiceAccount, name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: flow-aggregator-auth-delegator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: 'system:auth-delegator'}
+subjects: [{kind: ServiceAccount, name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: flow-aggregator-authentication-reader, namespace: kube-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: extension-apiserver-authentication-reader}
+subjects: [{kind: ServiceAccount, name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: flow-aggregator-cluster-identity, namespace: {{printf "%q" .AntreaNamespace}}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: antrea-cluster-identity-reader}
+subjects: [{kind: ServiceAccount, name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}
+spec:
+  selector: {operator.antrea.io/component: flow-aggregator}
+  ports: [{name: grpc, port: 14739, targetPort: grpc, protocol: TCP}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: flow-aggregator, namespace: {{printf "%q" .AntreaNamespace}}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {operator.antrea.io/component: flow-aggregator}
+  template:
+    metadata:
+      labels: {operator.antrea.io/component: flow-aggregator, operator.antrea.io/operand: core}
+      annotations:
+        operator.antrea.io/flow-config-hash: {{printf "%q" .ConfigHash}}
+    spec:
+      serviceAccountName: flow-aggregator
+      nodeSelector: {kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: flow-aggregator
+        image: {{printf "%q" .Image}}
+        args: [--config=/etc/flow-aggregator/flow-aggregator.conf, --logtostderr=true]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+        ports: [{name: grpc, containerPort: 14739, protocol: TCP}]
+        readinessProbe:
+          tcpSocket: {port: grpc}
+        env:
+        - name: POD_NAME
+          valueFrom: {fieldRef: {fieldPath: metadata.name}}
+        - name: POD_NAMESPACE
+          valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+        - name: FA_CONFIG_MAP_NAME
+          value: flow-aggregator-config
+        volumeMounts:
+        - {name: config, mountPath: /etc/flow-aggregator, readOnly: true}
+        - {name: run, mountPath: /var/run/antrea/apiserver}
+      volumes:
+      - name: config
+        configMap: {name: flow-aggregator-config}
+      - name: run
+        emptyDir: {}
+---
+apiVersion: crd.antrea.io/v1alpha1
+kind: FlowExporterDestination
+metadata: {name: operator-flow-aggregator}
+spec:
+  address: {{.AntreaNamespace}}/flow-aggregator:14739
+  protocol: {grpc: {}}
+  activeFlowExportTimeoutSeconds: 5
+  idleFlowExportTimeoutSeconds: 15
+  tlsConfig:
+    serverName: flow-aggregator.{{.AntreaNamespace}}.svc
+    caConfigMap: {name: flow-aggregator-ca, namespace: {{printf "%q" .AntreaNamespace}}}
+    clientSecret: {name: flow-aggregator-client-tls, namespace: {{printf "%q" .AntreaNamespace}}}
