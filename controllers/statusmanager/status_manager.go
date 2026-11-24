@@ -29,6 +29,7 @@ import (
 	"antrea.io/antrea-operator/controllers/flow"
 	"antrea.io/antrea-operator/controllers/install"
 	"antrea.io/antrea-operator/controllers/sharedinfo"
+	operatortypes "antrea.io/antrea-operator/controllers/types"
 )
 
 var log = logf.Log.WithName("status_manager")
@@ -184,8 +185,9 @@ func (status *StatusManager) FlowCleanupPending(ctx context.Context) (bool, erro
 		if err != nil {
 			return false, err
 		}
-		if obj.GetLabels()[OperandLabel] == CoreOperand && obj.GetLabels()[flow.ComponentLabel] == flow.Name {
-			return true, nil
+		owned, err := status.ownsLiveObject(ctx, ref, obj)
+		if owned || err != nil {
+			return owned, err
 		}
 	}
 	return false, nil
@@ -210,13 +212,38 @@ func (status *StatusManager) prune(ctx context.Context, ref configv1.ObjectRefer
 	if err != nil {
 		return false, err
 	}
-	if obj.GetLabels()[OperandLabel] != CoreOperand || (status.FlowResources[ref] && obj.GetLabels()[flow.ComponentLabel] != flow.Name) {
-		return false, nil
+	owned, err := status.ownsLiveObject(ctx, ref, obj)
+	if !owned || err != nil {
+		return false, err
 	}
 	// A replacement, relabel, or concurrent handover invalidates the delete.
 	uid, rv := obj.GetUID(), obj.GetResourceVersion()
 	err = status.client.Delete(ctx, obj, client.PropagationPolicy("Background"), client.Preconditions{UID: &uid, ResourceVersion: &rv})
 	return err == nil || k8serrors.IsNotFound(err), client.IgnoreNotFound(err)
+}
+
+func (status *StatusManager) ownsLiveObject(ctx context.Context, ref configv1.ObjectReference, obj *uns.Unstructured) (bool, error) {
+	if obj.GetLabels()[OperandLabel] != CoreOperand {
+		return false, nil
+	}
+	isFlow := obj.GetLabels()[flow.ComponentLabel] == flow.Name
+	// Flow markers from a previous namespace or a retained inventory entry
+	// do not grant cleanup authority in the current namespace.
+	if status.FlowResources[ref] != isFlow {
+		return false, nil
+	}
+	if !isFlow {
+		return true, nil
+	}
+	owner := metav1.GetControllerOf(obj)
+	if owner == nil || owner.Kind != "Network" || owner.APIVersion != configv1.GroupVersion.String() || owner.Name != operatortypes.ClusterConfigName {
+		return false, nil
+	}
+	network := new(configv1.Network)
+	if err := status.client.Get(ctx, client.ObjectKey{Name: owner.Name}, network); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return owner.UID == network.UID, nil
 }
 
 func (status *StatusManager) setConditions(progressing []string, reachedAvailableLevel bool) {

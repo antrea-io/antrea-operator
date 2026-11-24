@@ -48,7 +48,8 @@ func TestFlowPartialApplyOwnershipAndCleanup(t *testing.T) {
 	scheme.AddKnownTypeWithName(flow.DestinationGVK, &unstructured.Unstructured{})
 	scheme.AddKnownTypeWithName(flow.DestinationGVK.GroupVersion().WithKind("FlowExporterDestinationList"), &unstructured.UnstructuredList{})
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: "antrea"}}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(co).WithStatusSubresource(co).Build()
+	network := &configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster", UID: "network-uid"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(co, network).WithStatusSubresource(co).Build()
 	mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme)
 	status, err := statusmanager.New(c, mapper, "antrea", "antrea-operator", "test", &sharedinfo.SharedInfo{AntreaPlatform: "openshift"})
 	if err != nil {
@@ -72,6 +73,20 @@ func TestFlowPartialApplyOwnershipAndCleanup(t *testing.T) {
 		obj.SetOwnerReferences([]metav1.OwnerReference{owner})
 		obj.SetLabels(map[string]string{flow.ComponentLabel: flow.Name, statusmanager.OperandLabel: statusmanager.CoreOperand})
 	}
+	// A retained reference to flow credentials in a prior core namespace
+	// belongs to the migration owner's explicit handover.
+	old := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "previous-core", Name: "flow-aggregator-client-tls", Labels: map[string]string{flow.ComponentLabel: flow.Name, statusmanager.OperandLabel: statusmanager.CoreOperand}}}
+	if err := c.Create(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Name: "antrea"}, co); err != nil {
+		t.Fatal(err)
+	}
+	co.Status.RelatedObjects = []configv1.ObjectReference{{Resource: "secrets", Name: old.Name, Namespace: old.Namespace}}
+	if err := c.Status().Update(ctx, co); err != nil {
+		t.Fatal(err)
+	}
+
 	// Leave a subset of objects live without publishing an inventory.
 	// The first collision is a customer-owned Secret at a reserved identity.
 	key := client.ObjectKey{Namespace: ns, Name: "flow-aggregator-client-tls"}
@@ -101,6 +116,9 @@ func TestFlowPartialApplyOwnershipAndCleanup(t *testing.T) {
 	}
 	if pending, err := status.FlowCleanupPending(ctx); err != nil || pending {
 		t.Fatalf("cleanup pending %t, err %v", pending, err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(old), old); err != nil {
+		t.Fatal(err)
 	}
 	if err := c.Get(ctx, key, foreign); err != nil || string(foreign.Data["customer"]) != "value" || foreign.UID != "customer" {
 		t.Fatalf("lost customer Secret: %v", err)
@@ -155,6 +173,23 @@ func TestFlowPartialApplyOwnershipAndCleanup(t *testing.T) {
 		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj.DeepCopy()); !apierrors.IsNotFound(err) {
 			t.Fatalf("left %s %s: %v", obj.GetKind(), obj.GetName(), err)
 		}
+	}
+	// A replacement can retain labels from an earlier Network owner.
+	replaced := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: map[string]string{flow.ComponentLabel: flow.Name, statusmanager.OperandLabel: statusmanager.CoreOperand}}}
+	previous := owner
+	previous.UID = "retired-network-uid"
+	replaced.OwnerReferences = []metav1.OwnerReference{previous}
+	if err := c.Create(ctx, replaced); err != nil {
+		t.Fatal(err)
+	}
+	if err := status.SetInventory(nil, nil, []configv1.ObjectReference{}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := status.FlowCleanupPending(ctx); err != nil || pending {
+		t.Fatalf("foreign replacement blocks cleanup: %t %v", pending, err)
+	}
+	if err := c.Get(ctx, key, replaced); err != nil {
+		t.Fatal(err)
 	}
 }
 

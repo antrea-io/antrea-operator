@@ -46,7 +46,8 @@ absent and preserves an existing schema. The shared CRD remains installed when t
 including any user-created destinations. The operator retains its core field
 manager. Core and flow markers, live resource version, controller UID and
 an atomic create protect occupied identities on enable. Cleanup of retired
-flow objects requires the declared identity and both live ownership labels.
+flow objects requires the declared identity, both live ownership labels and
+the current Network controller UID.
 Deletes carry the observed UID and resource version.
 
 | Scope | Managed identities while enabled |
