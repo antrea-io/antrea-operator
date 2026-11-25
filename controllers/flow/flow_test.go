@@ -4,6 +4,7 @@ package flow
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -97,6 +98,11 @@ func TestLifecycleRender(t *testing.T) {
 		}
 		previousHash = hash
 		container := tpl.Spec.Containers[0]
+		if !slices.ContainsFunc(container.Env, func(env corev1.EnvVar) bool {
+			return env.Name == "ANTREA_CLUSTER_IDENTITY_NAMESPACE" && env.Value == ns && env.ValueFrom == nil
+		}) {
+			t.Fatalf("missing cluster identity namespace %q in %v", ns, container.Env)
+		}
 		if container.Image != "registry.test/flow:dist" && container.Image != spec.Image {
 			t.Fatal(container.Image)
 		}
